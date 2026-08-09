@@ -1,0 +1,1 @@
+# metin2-singleplayer-serverfiles-linux
