@@ -684,6 +684,14 @@ T = {
  "about_contact":{"en":"If you feel the server needs adjusting — the rates, movement speed, or anything else — write to",
                   "de":"Wenn du findest, dass am Server etwas angepasst werden sollte — die Raten, die Laufgeschwindigkeit oder irgendetwas anderes — schreib an",
                   "tr":"Sunucuda bir şeyin ayarlanması gerektiğini düşünüyorsan — oranlar, hareket hızı ya da başka herhangi bir şey — şu adrese yaz:"},
+ # --- local install: the game is on this machine, there is nothing to fetch ---
+ "dl_local_t":   {"en":"The game is on this computer","de":"Das Spiel liegt auf diesem Computer","tr":"Oyun bu bilgisayarda"},
+ "dl_local":     {"en":"Nothing to download: this server runs on the machine you are sitting at, so the game was unpacked here directly. Look for <b>Metin2 Singleplayer</b> on your Desktop and start it from there.",
+                  "de":"Nichts herunterzuladen: Dieser Server läuft auf dem Rechner, an dem du sitzt, das Spiel wurde also gleich hier ausgepackt. Auf dem Desktop findest du <b>Metin2 Singleplayer</b> — von dort startest du es.",
+                  "tr":"İndirilecek bir şey yok: bu sunucu şu an başında oturduğun makinede çalışıyor, oyun da doğrudan buraya açıldı. Masaüstünde <b>Metin2 Singleplayer</b> kısayolunu bul ve oradan başlat."},
+ "dl_local_w":   {"en":"Still unpacking. It is well over a gigabyte, so give it a few minutes — the shortcut appears on the Desktop when it is done.",
+                  "de":"Wird noch ausgepackt. Es ist deutlich über ein Gigabyte, gib ihm also ein paar Minuten — die Verknüpfung erscheint auf dem Desktop, sobald es fertig ist.",
+                  "tr":"Hâlâ açılıyor. Bir gigabayttan epey büyük, birkaç dakika ver — bitince kısayol masaüstünde belirir."},
  # --- the operator's orientation, shown once they are logged in ---
  # This is the first thing the person who installed the server sees. It exists
  # because the dashboard used to open straight onto three cards with no
@@ -1240,7 +1248,16 @@ setInterval(function(){
 <p>{{t('about_oss')}}</p>
 {% if contact %}<p>{{t('about_contact')}} <a href="mailto:{{contact}}">{{contact}}</a>.</p>{% endif %}
 </div>
-{% if client_ready or client_url %}
+{% if local_only %}
+{# A local server plays on the machine it runs on, so there is nothing to
+   fetch over the network. Point at the Desktop shortcut instead of at a
+   download button that would only copy a file to where it already is. #}
+<div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
+<div style="font-size:40px">🎮</div>
+<h3>{{t('dl_local_t')}}</h3>
+<p class="muted">{% if client_ready %}{{t('dl_local')|safe}}{% else %}{{t('dl_local_w')}}{% endif %}</p>
+</div>
+{% elif client_ready or client_url %}
 <div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
 <div style="font-size:40px">🎮</div>
 <h3>{{t('player_q')}}</h3>
@@ -1350,7 +1367,9 @@ TPL_REG_DONE = BASE.replace("__BODY__", """
 <li>{{t('dl_st3')}}</li>
 <li>{{t('reg_done_login')}}</li>
 </ol>
-{% if client_ready or client_url %}
+{% if local_only %}
+<p class="muted">{{t('dl_local')|safe}}</p>
+{% elif client_ready or client_url %}
 <a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
    title="{{t('tip_download')}}" {% if client_url %}rel="noopener noreferrer"{% endif %}>{{t('download')}}</a>
 {% endif %}
