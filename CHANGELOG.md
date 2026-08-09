@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.1.6 — 2026-08-10
+
+### Added
+
+- A "Check for the latest version" button on the patch log page. It asks
+  straight away instead of waiting for the daily check.
+
+---
+
 ## 1.1.5 — 2026-08-10
 
 ### Changed

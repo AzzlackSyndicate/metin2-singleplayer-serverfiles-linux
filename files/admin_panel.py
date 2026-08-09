@@ -1384,6 +1384,12 @@ T = {
  "upd_avail_short":{"en":"update available","de":"Update verfügbar","tr":"güncelleme var"},
  "upd_see":      {"en":"See what it brings","de":"Ansehen, was es bringt","tr":"Neler getirdiğine bak"},
  "pl_card_t":    {"en":"Version and changes","de":"Version und Änderungen","tr":"Sürüm ve değişiklikler"},
+ "pl_check":     {"en":"🔄 Check for the latest version","de":"🔄 Nach der neuesten Version suchen","tr":"🔄 En son sürümü kontrol et"},
+ "pl_check_new": {"en":"A newer version is available: {new}.","de":"Eine neuere Version ist verfügbar: {new}.","tr":"Daha yeni bir sürüm var: {new}."},
+ "pl_check_ok":  {"en":"Checked. You already have the newest published version.","de":"Geprüft. Du hast bereits die neueste veröffentlichte Version.","tr":"Kontrol edildi. Zaten en yeni yayımlanan sürüme sahipsin."},
+ "pl_check_bad": {"en":"The update server could not be reached. Nothing on your server changed.","de":"Zugriff auf den Update-Server war nicht möglich. An deinem Server hat sich nichts geändert.","tr":"Güncelleme sunucusuna ulaşılamadı. Sunucunda hiçbir şey değişmedi."},
+ "pl_check_off": {"en":"The update check is switched off, so this asked nothing. Set M2_UPDATE_CHECK=1 in .env to turn it back on.","de":"Die Update-Prüfung ist ausgeschaltet, es wurde also nichts abgefragt. Setze M2_UPDATE_CHECK=1 in .env, um sie wieder einzuschalten.","tr":"Güncelleme kontrolü kapalı, bu yüzden hiçbir sorgu yapılmadı. Yeniden açmak için .env içinde M2_UPDATE_CHECK=1 ayarla."},
+ "pl_check_wait":{"en":"Just checked a moment ago — give it a minute.","de":"Gerade eben schon geprüft — gib ihm eine Minute.","tr":"Az önce kontrol edildi — bir dakika bekle."},
  "pl_open":      {"en":"📜 Open the patch log","de":"📜 Patchlog öffnen","tr":"📜 Sürüm notlarını aç"},
  "upd_none":     {"en":"This is the newest published version.","de":"Das ist die neueste veröffentlichte Version.","tr":"Bu, yayımlanan en yeni sürüm."},
  "upd_never":    {"en":"Not checked yet — the first check happens a couple of minutes after the panel starts.",
@@ -2482,6 +2488,15 @@ TPL_PATCHLOG = BASE.replace("__BODY__", """
 {% else %}
 <p class="muted">{{t('upd_none')}}{% if upd.error %} — {{t('upd_failed')}}{% endif %}</p>
 {% endif %}
+{# Asks straight away instead of waiting for the daily check -- the one place
+   in the panel where a page deliberately waits for the network, because
+   somebody pressed a button and is owed an answer. #}
+{% if upd.enabled %}
+<form method="post" action="{{url_for('patchlog_check')}}" style="margin-top:10px">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+<button class="btn">{{t('pl_check')}}</button>
+</form>
+{% endif %}
 {% if upd.checked %}<p class="muted" style="font-size:12px">{{t('upd_checked')}}: {{checked_at}}</p>{% endif %}
 </div>
 
@@ -2612,6 +2627,36 @@ def patchlog():
         can_apply=update_can_apply(),
         apply_on=UPDATE_APPLY,
         manual=manual_update())
+
+@app.route("/patchlog/check", methods=["POST"])
+@login_required
+def patchlog_check():
+    """Ask now, rather than waiting for the daily check.
+
+    Done on the request thread on purpose: somebody pressed a button and is
+    waiting for an answer, so an answer is what they get. It is the only place
+    in the panel where a page waits for the network, and it is bounded -- the
+    fetch has its own timeout and there are at most two of them.
+    """
+    # The CSRF token is verified for every POST in csrf_protect(), so there is
+    # nothing to check here.
+    if not UPDATE_CHECK:
+        flash(t("pl_check_off"), "error")
+        return redirect(url_for("patchlog"))
+    # A button anyone logged in can press should not become a way to hammer
+    # somebody else's server. Four a minute is far more than a person needs.
+    if rate_limited("updcheck", 4, 60):
+        flash(t("pl_check_wait"), "error")
+        return redirect(url_for("patchlog"))
+    _update_check_now()
+    st = update_state()
+    if st["error"]:
+        flash(t("pl_check_bad"), "error")
+    elif st["available"]:
+        flash(t("pl_check_new").replace("{new}", st["latest"]))
+    else:
+        flash(t("pl_check_ok"))
+    return redirect(url_for("patchlog"))
 
 @app.route("/update")
 @login_required
