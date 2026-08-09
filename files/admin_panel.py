@@ -685,6 +685,11 @@ T = {
                   "de":"Wenn du findest, dass am Server etwas angepasst werden sollte — die Raten, die Laufgeschwindigkeit oder irgendetwas anderes — schreib an",
                   "tr":"Sunucuda bir şeyin ayarlanması gerektiğini düşünüyorsan — oranlar, hareket hızı ya da başka herhangi bir şey — şu adrese yaz:"},
  # --- local install: the game is on this machine, there is nothing to fetch ---
+ "admin_hint_local":{"en":"This server only listens to this computer, so there is no passphrase to type.",
+                  "de":"Dieser Server lauscht nur auf diesem Computer, es gibt also keine Passphrase einzugeben.",
+                  "tr":"Bu sunucu yalnızca bu bilgisayarı dinliyor, bu yüzden girilecek bir parola yok."},
+ "admin_open":   {"en":"🛠️ Manage the server","de":"🛠️ Server verwalten","tr":"🛠️ Sunucuyu yönet"},
+ "back_front":   {"en":"← Front page","de":"← Startseite","tr":"← Ana sayfa"},
  "dl_local_t":   {"en":"The game is on this computer","de":"Das Spiel liegt auf diesem Computer","tr":"Oyun bu bilgisayarda"},
  "dl_local":     {"en":"Nothing to download: this server runs on the machine you are sitting at, so the game was unpacked here directly. Look for <b>Metin2 Singleplayer</b> on your Desktop and start it from there.",
                   "de":"Nichts herunterzuladen: Dieser Server läuft auf dem Rechner, an dem du sitzt, das Spiel wurde also gleich hier ausgepackt. Auf dem Desktop findest du <b>Metin2 Singleplayer</b> — von dort startest du es.",
@@ -1210,7 +1215,10 @@ input[title]{cursor:text}
 <span style="font-size:13px" title="{{t('tip_lang')}}">
 {% for code, name in langs.items() %}<a href="{{url_for('setlang', code=code)}}" title="{{name}}" style="margin:0 3px;{{'font-weight:700;text-decoration:underline' if code==curlang else 'opacity:.7'}}">{{code|upper}}</a>{% endfor %}
 </span>
-{% if session.get('auth') %}&nbsp;<a href="{{url_for('logout')}}" title="{{t('tip_logout')}}">{{t('logout')}} 🚪</a>{% endif %}</div></div>
+{% if session.get('auth') %}&nbsp;<a href="{{url_for('logout')}}" title="{{t('tip_logout')}}">{{t('logout')}} 🚪</a>{% endif %}
+{# A local install never logs in, so it never gets a logout link either -- and
+   without one there was no way back to the front page from the admin side. #}
+{% if local_only and request.endpoint != 'login' %}&nbsp;<a href="{{url_for('login')}}">{{t('back_front')}}</a>{% endif %}</div></div>
 <div class="wrap">
 {% with m = get_flashed_messages(with_categories=true) %}{% for c,msg in m %}
 <div class="flash {{'err' if c=='error' else ''}}">{{msg}}</div>{% endfor %}{% endwith %}
@@ -1281,12 +1289,18 @@ setInterval(function(){
 <a class="btn" href="{{url_for('account')}}" title="{{t('tip_my_acc')}}">{{t('my_acc')}}</a>
 </div></div>
 <div class="card" style="max-width:380px;margin:0 auto;text-align:center">
-<div style="font-size:40px">🔑</div>
+<div style="font-size:40px">{% if local_only %}🛠️{% else %}🔑{% endif %}</div>
 <h3>{{t('welcome')}}</h3>
+{% if local_only %}
+<p class="muted">{{t('admin_hint_local')}}</p>
+<a class="btn big" href="/admin">{{t('admin_open')}}</a>
+{% else %}
 <p class="muted">{{t('admin_hint')}}</p>
 <form method="post"><input type="hidden" name="_csrf" value="{{csrf_token}}">
 <input type="password" name="pw" placeholder="{{t('passphrase')}}" title="{{t('tip_passphrase')}}">
-<button class="big" title="{{t('tip_login')}}">{{t('login')}}</button></form></div>""")
+<button class="big" title="{{t('tip_login')}}">{{t('login')}}</button></form>
+{% endif %}
+</div>""")
 
 TPL_DL_LIMIT = BASE.replace("__BODY__", """
 <div class="card" style="max-width:420px;margin:40px auto;text-align:center">
@@ -1683,11 +1697,14 @@ def rates():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    # On a local install there is nothing to log in to -- see local_open().
-    # Go straight in rather than showing a passphrase box that guards a door
-    # only the person already standing in the room can open.
-    if local_open():
-        return redirect(url_for("dash"))
+    # On a local install there is nothing to log in to -- see local_open(). The
+    # page itself still matters though: it carries registration, the game and
+    # the server status. An earlier version redirected it to the admin view,
+    # which made all of that unreachable and left no way back, because the
+    # logout link is hidden when nobody is logged in. So: render it, minus the
+    # passphrase box, with a button through to the admin side.
+    if local_open() and request.method == "POST":
+        return redirect(url_for("login"))
     ip = request.remote_addr
     if request.method == "POST":
         cnt, lock = FAILS.get(ip, [0, 0])
@@ -1993,8 +2010,16 @@ def logout():
     return redirect(url_for("login"))
 
 @app.route("/")
+@app.route("/admin")
 @login_required
 def dash():
+    # A local install has no login step, so "/" would drop the owner straight
+    # into the admin view with no way to reach the front page -- where the game,
+    # registration and the server status live. There, "/" is the front page and
+    # the admin view has its own address. Everywhere else this changes nothing:
+    # "/" stays the dashboard you reach by entering the passphrase.
+    if local_open() and request.path == "/":
+        return redirect(url_for("login"))
     try:
         with db() as c, c.cursor() as cur:
             cur.execute("SELECT p.id, p.name, p.job, p.level, p.gold, p.last_play, "
