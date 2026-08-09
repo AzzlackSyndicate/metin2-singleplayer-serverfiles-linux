@@ -26,8 +26,10 @@
 #     3. downloads the server
 #     4. invents a password for the admin panel and two for the database
 #     5. builds and starts the server, all on 127.0.0.1
-#     6. starts building a game client pointed at 127.0.0.1
-#     7. prints the three things you need: client link, panel link, password
+#     6. starts building a game client pointed at 127.0.0.1, and -- long after
+#        this installer has finished -- unpacks it onto this PC and puts a
+#        "Metin2 Singleplayer" shortcut on the Desktop
+#     7. prints the three things you need: the game, panel link, password
 #
 #  Safe to run twice. If a server is already here it says so and leaves your
 #  characters alone.
@@ -116,6 +118,20 @@ $script:PanelPasswordNew   = $true
 $script:FreshInstall      = $true
 $script:ClientState       = 'unavailable'
 $script:ClientLog         = ''
+# Where the playable game ends up on this PC, and what the Desktop shortcut
+# into it is called. Both are read by the summary at the end.
+$script:ClientDir         = ''
+$script:ClientExe         = ''
+$script:ShortcutName      = 'Metin2 Singleplayer'
+# Where PowerShell's own complaints go when the background script cannot even
+# be started. Filled in with a name of their own per launch -- see
+# Merge-ClientSideLogs.
+$script:ClientHostOut     = ''
+$script:ClientHostErr     = ''
+# A Windows install is always local-only -- Write-Configuration says so in the
+# .env -- and that is what decides whether the game is unpacked onto this PC or
+# merely offered on the panel's download page.
+$script:LocalOnly         = $true
 $script:DryRun            = $false
 $script:AssumeYes         = $false
 
@@ -1198,6 +1214,44 @@ function Write-Configuration {
     #     so an existing value must be kept.
     $rootPw = Get-EnvValue $envPath 'M2_DB_ROOT_PASSWORD'
     $dbPw   = Get-EnvValue $envPath 'M2_DB_PASSWORD'
+    # A database volume that already exists with NO password to go with it is
+    # the one combination that cannot work -- and it fails unreadably. MariaDB
+    # only runs its setup on an EMPTY data directory; find a populated one and
+    # it keeps the passwords it was built with and ignores whatever we pass.
+    # Generating fresh ones here hands the game and the panel credentials the
+    # database has never heard of, and the only trace is "Access denied for
+    # user 'metin2'" in a log nobody thinks to open.
+    #
+    # The route there is ordinary: install once, delete the install folder,
+    # install again. The folder held .env; the volume did not go with it.
+    if ((-not $dbPw) -or (-not $rootPw)) {
+        $dbVol = "$(Get-StackProject)_db-data"
+        if ((Invoke-Native 'docker' @('volume', 'inspect', $dbVol)).Code -eq 0) {
+            Stop-Friendly @"
+There is already a database here from an earlier install, but the
+passwords that go with it are gone -- they lived in the .env file in
+$($script:InstallDir), which is no longer there.
+
+Nothing can recover them: they were never written anywhere else, on
+purpose. So there are two ways forward.
+
+Keep the characters and accounts, if you still have that old .env
+somewhere (a backup, another folder), by putting it back and running
+this again:
+
+    copy C:\path\to\old\.env "$($script:InstallDir)\.env"
+
+Or start the database over -- this DELETES every character and account
+on this server, and cannot be undone:
+
+    cd "$($script:InstallDir)"
+    docker compose down -v
+
+then run this installer again. Everything else -- the built images, the
+downloaded server files, the client -- is kept either way.
+"@
+        }
+    }
     if (-not $rootPw) { $rootPw = New-Secret; Write-Good 'database root password: generated' }
     else { Write-Info 'database root password: keeping the existing one' }
     if (-not $dbPw)   { $dbPw = New-Secret;   Write-Good 'database password: generated' }
@@ -1429,12 +1483,45 @@ function Wait-Healthy {
 }
 
 # =============================================================================
-#  Step 6 -- the game client
+#  Step 6 -- the game client, and getting it onto this PC
 #
 #  Built by a separate compose service that downloads a large archive, patches
 #  the address the client connects to (127.0.0.1 here), repacks it and leaves
 #  client.zip where the panel serves it. It takes a long time, so it runs in
 #  the background and we report honestly on where it got to.
+#
+#  On a Windows install that download page is a round trip to nowhere: the
+#  client is being built on the very PC that is going to play it. So the same
+#  background run carries on afterwards -- it copies the finished zip out of
+#  the panel's volume, unpacks it here, and puts a shortcut on the Desktop.
+#  Nobody has to open a browser to get the game they just built.
+#
+#  All of that happens AFTER this installer has printed its summary and gone.
+#  The build is twenty to sixty minutes and nobody will sit and watch it, so
+#  the copy-out, the unpack and the shortcut cannot live in this script's own
+#  flow. They live in a small script written next to the server --
+#  client-setup.ps1 -- which this one starts detached and then forgets about.
+#  It is an ordinary file you can read, and running it again by hand is the
+#  supported way to retry: it does nothing at all when the game is already
+#  here.
+#
+#  WHERE THE GAME LANDS: <install dir>\client. Three reasons for that rather
+#  than the Desktop or a temp folder:
+#
+#    * the install folder's length has already been measured against Windows'
+#      260-character limit (Test-InstallPathLength); the Desktop's has not,
+#      and the client tree is three levels deep with long pack names in it
+#    * on a great many PCs the Desktop is redirected into OneDrive, and
+#      unpacking 1.2 GB there would quietly begin uploading it to the cloud
+#    * everything this installer made then sits in one folder, so "delete the
+#      folder" stays the whole uninstall
+#
+#  It costs about 1.2 GB for the copied zip -- deleted the moment it is
+#  unpacked -- and roughly twice that for the unpacked tree, both on the
+#  install folder's drive. The obvious way to avoid the copy, bind-mounting a
+#  Windows folder into the builder so it writes straight there, is much worse:
+#  a gigabyte of small files through Docker Desktop's filesystem bridge takes
+#  far longer than copying one finished archive out afterwards.
 # =============================================================================
 
 function Test-ClientZipPresent {
@@ -1442,39 +1529,572 @@ function Test-ClientZipPresent {
     return ($r.Code -eq 0)
 }
 
+# The unpacked game, if it is here. client-setup.ps1 writes this one-line stamp
+# INSIDE the folder before renaming it into place, so its presence means the
+# unpack finished -- a folder that is still being written is called something
+# else and has no stamp in it. That is the whole "already done" test, and it is
+# why a half-finished unpack can never be mistaken for a playable game.
+function Get-LocalClientExe {
+    if (-not $script:ClientDir) { return '' }
+    $stamp = Join-Path $script:ClientDir '.metin2-client'
+    if (-not (Test-Path -LiteralPath $stamp)) { return '' }
+    try {
+        $exe = [IO.File]::ReadAllLines($stamp) |
+               Where-Object { $_.Trim() } | Select-Object -First 1
+    } catch { return '' }
+    if ($exe -and (Test-Path -LiteralPath $exe.Trim())) { return $exe.Trim() }
+    return ''
+}
+
+# --- writing values into a generated script ---------------------------------
+#
+# Everything client-setup.ps1 needs is baked into it as a PowerShell string
+# literal rather than passed on a command line, and that is deliberate. The
+# archive this stack downloads is published as "[40250] Reference
+# Serverfile-....zip"; Start-Process -ArgumentList joins its elements with
+# spaces and quotes nothing, so a path handed over that way arrives torn in
+# half -- which is exactly how "no such service: Reference" happened once. A
+# single-quoted literal inside a file has no such problem, whatever is in it.
+function ConvertTo-PsLiteral {
+    param([string]$Value)
+    return "'" + (([string]$Value) -replace "'", "''") + "'"
+}
+function ConvertTo-PsArrayLiteral {
+    param([string[]]$Values)
+    if (-not $Values -or $Values.Count -eq 0) { return '@()' }
+    return '@(' + (($Values | ForEach-Object { ConvertTo-PsLiteral $_ }) -join ', ') + ')'
+}
+
+# Write client-setup.ps1 into the install folder and hand back its path.
+function Write-ClientSetupScript {
+    param([string[]]$BuildArgs, [string]$ArchiveInContainer)
+
+    $path = Join-Path $script:InstallDir 'client-setup.ps1'
+
+    $head = @(
+        '# ==========================================================================='
+        '#  client-setup.ps1 -- written by install.ps1. Safe to run again at any time.'
+        '#'
+        '#  It finishes the job the installer could not wait for: it builds the game'
+        '#  client if that has not happened yet, copies it out of the panel, unpacks'
+        '#  it onto this PC and puts a shortcut on the Desktop. Everything it does is'
+        '#  appended to the log named below, which is the one file to look at when'
+        '#  the game did not appear.'
+        '#'
+        '#  If the game is already unpacked it does nothing and says so. So:'
+        '#'
+        "#      powershell -ExecutionPolicy Bypass -File `"$path`""
+        '#'
+        '#  ...is always a safe thing to run.'
+        '# ==========================================================================='
+        ''
+        "`$InstallDir   = $(ConvertTo-PsLiteral $script:InstallDir)"
+        "`$LogPath      = $(ConvertTo-PsLiteral $script:ClientLog)"
+        "`$ClientDir    = $(ConvertTo-PsLiteral $script:ClientDir)"
+        "`$ShortcutName = $(ConvertTo-PsLiteral $script:ShortcutName)"
+        "`$PanelUrl     = $(ConvertTo-PsLiteral "http://127.0.0.1:$($script:PanelPort)")"
+        "`$PanelZip     = '/usr/local/m2panel/client.zip'"
+        "`$BuildArgs    = $(ConvertTo-PsArrayLiteral $BuildArgs)"
+        "`$CachedArchive = $(ConvertTo-PsLiteral $ArchiveInContainer)"
+        "`$UnpackHere   = `$$($script:LocalOnly.ToString().ToLower())"
+        "`$SelfPath     = $(ConvertTo-PsLiteral $path)"
+        "`$HostOut      = $(ConvertTo-PsLiteral $script:ClientHostOut)"
+        "`$HostErr      = $(ConvertTo-PsLiteral $script:ClientHostErr)"
+        ''
+        ''
+    ) -join "`n"
+
+    # Single-quoted here-string: not one character of this is expanded here. It
+    # is a program in its own right and its $variables are its own.
+    $body = @'
+$ErrorActionPreference = 'Stop'
+
+$TmpZip   = Join-Path $InstallDir '.client.zip.part'
+$TmpDir   = Join-Path $InstallDir '.client.new'
+$LockPath = Join-Path $InstallDir '.client-setup.lock'
+$Stamp    = '.metin2-client'
+
+# --- the log ----------------------------------------------------------------
+# One writer, opened in append mode, flushed on every line. The installer
+# points the human at this file and nothing else, so everything below --
+# docker's output included -- goes through here. Until it opens, and if it
+# cannot be opened at all, messages fall through to standard output, which is
+# the temp file folded back in at the bottom of this script.
+$log = $null
+try {
+    $log = New-Object System.IO.StreamWriter($LogPath, $true, (New-Object System.Text.UTF8Encoding($false)))
+    $log.AutoFlush = $true
+} catch { $log = $null }
+
+function Say {
+    param([string]$Text)
+    $line = '{0} [setup] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Text
+    if ($log) { $log.WriteLine($line) } else { Write-Output $line }
+}
+
+function Show-Size {
+    param([int64]$Bytes)
+    if ($Bytes -ge 1GB) { return ('{0:N1} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:N0} MB' -f ($Bytes / 1MB)) }
+    return ('{0:N0} KB' -f ($Bytes / 1KB))
+}
+
+# Same reasoning as Invoke-Native in install.ps1: a native program's standard
+# error becomes an error record the moment it is redirected, and under
+# $ErrorActionPreference = 'Stop' that record is terminating. docker writes its
+# whole build log there and means nothing by it.
+function Invoke-Docker {
+    param([string[]]$Arguments)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & docker @Arguments 2>&1 | ForEach-Object {
+            $t = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
+            if ($log) { $log.WriteLine($t) } else { Write-Output $t }
+        }
+        return $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previous }
+}
+
+function Invoke-DockerQuiet {
+    param([string[]]$Arguments)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & docker @Arguments 2>&1
+        return [pscustomobject]@{ Code = $LASTEXITCODE; Output = (($out | Out-String).Trim()) }
+    } finally { $ErrorActionPreference = $previous }
+}
+
+# --- one at a time ----------------------------------------------------------
+# Two of these running together would copy and unpack a gigabyte twice over
+# each other. The check is a file holding a process id: not airtight against a
+# perfectly timed pair, but the case it is for -- somebody running the
+# installer again while the first build is still going -- is not perfectly
+# timed.
+$lockTaken = $false
+function Get-SetupLock {
+    if (Test-Path -LiteralPath $LockPath) {
+        $other = $null
+        try {
+            $text = (Get-Content -LiteralPath $LockPath -TotalCount 1 -ErrorAction SilentlyContinue)
+            if ("$text".Trim() -match '^\d+$') {
+                $other = Get-Process -Id ([int]"$text".Trim()) -ErrorAction SilentlyContinue
+            }
+        } catch { $other = $null }
+        if ($other -and $other.ProcessName -like 'powershell*') { return $false }
+        Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+    }
+    Set-Content -LiteralPath $LockPath -Value "$PID" -Encoding ASCII
+    return $true
+}
+
+# --- finding the launcher ---------------------------------------------------
+# The zip is built by pack_prepare_client(), which packs the client's own root
+# folder, so Metin2Distribute.exe sits at the very top. The search below is for
+# the day somebody hands the stack a differently-packed client: shallowest
+# match wins, and the tools that live next to the game -- the pack editor, the
+# screen-settings program, the VC++ redistributable -- are excluded by name so
+# the shortcut can never point at one of them.
+function Find-ClientExe {
+    param([string]$Root)
+    if (-not (Test-Path -LiteralPath $Root)) { return '' }
+    $direct = Join-Path $Root 'Metin2Distribute.exe'
+    if (Test-Path -LiteralPath $direct) { return $direct }
+    $hit = Get-ChildItem -LiteralPath $Root -Recurse -Depth 2 -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -like 'Metin2*' -and
+                          $_.Name -notmatch '(?i)eternexus|dump_proto|vcredist|config' } |
+           Sort-Object { $_.FullName.Split('\').Count }, Name |
+           Select-Object -First 1
+    if ($hit) { return $hit.FullName }
+    return ''
+}
+
+# --- the Desktop shortcut ---------------------------------------------------
+# A .lnk through WScript.Shell, which is the only way to make a real one. The
+# working directory matters as much as the target: the client loads its packs
+# by relative path and starts into an error box if it is launched from
+# anywhere else.
+#
+# A shortcut of this name that is ALREADY on the Desktop is never overwritten.
+# Somebody may have moved it, renamed the game folder or pointed it somewhere
+# on purpose, and silently replacing that would be rude. It is only reported.
+function Set-DesktopShortcut {
+    param([string]$Exe)
+
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) {
+        Say "could not find your Desktop folder, so no shortcut was made."
+        Say "the game is at $Exe"
+        return $false
+    }
+    $lnk = Join-Path $desktop ($ShortcutName + '.lnk')
+
+    $shell = $null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+
+        if (Test-Path -LiteralPath $lnk) {
+            $target = ''
+            try { $target = [string]$shell.CreateShortcut($lnk).TargetPath } catch { $target = '' }
+            if ([string]::Equals($target, $Exe, [StringComparison]::OrdinalIgnoreCase)) {
+                Say "the Desktop shortcut '$ShortcutName' is already there and already points at the game -- left alone"
+            } else {
+                Say "a shortcut called '$ShortcutName' is already on your Desktop and points at"
+                Say "  $target"
+                Say "it was NOT changed. The game this installer unpacked is at"
+                Say "  $Exe"
+            }
+            return $true
+        }
+
+        $s = $shell.CreateShortcut($lnk)
+        $s.TargetPath       = $Exe
+        $s.WorkingDirectory = (Split-Path -Parent $Exe)
+        $s.IconLocation     = "$Exe,0"
+        $s.Description      = 'Metin2 -- the private server on this PC'
+        $s.Save()
+        if (-not (Test-Path -LiteralPath $lnk)) {
+            Say "the Desktop shortcut could not be written to $lnk"
+            return $false
+        }
+        Say "Desktop shortcut created: $lnk"
+        Say "  it starts   $Exe"
+        Say "  from        $(Split-Path -Parent $Exe)"
+        return $true
+    } catch {
+        Say "the Desktop shortcut could not be created: $($_.Exception.Message)"
+        Say "the game itself is fine -- start it by double-clicking $Exe"
+        return $false
+    } finally {
+        if ($shell) {
+            try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) } catch { }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+#  The whole job. Returns $true when the game is playable on this PC.
+# ---------------------------------------------------------------------------
+function Invoke-ClientSetup {
+
+    # -- already done? --------------------------------------------------------
+    $exe = ''
+    $stampFile = Join-Path $ClientDir $Stamp
+    if (Test-Path -LiteralPath $stampFile) {
+        try {
+            $exe = ([IO.File]::ReadAllLines($stampFile) |
+                    Where-Object { $_.Trim() } | Select-Object -First 1)
+        } catch { $exe = '' }
+        if ($exe) { $exe = $exe.Trim() }
+        if ($exe -and (Test-Path -LiteralPath $exe)) {
+            Say "the game is already unpacked in $ClientDir -- nothing to do"
+            [void](Set-DesktopShortcut $exe)
+            return $true
+        }
+        Say "there is a stamp in $ClientDir but the game it names is gone"
+    }
+
+    # -- 1. the build ---------------------------------------------------------
+    $havePanelZip = ((Invoke-DockerQuiet @('compose','exec','-T','panel','test','-f',$PanelZip)).Code -eq 0)
+    if (-not $havePanelZip) {
+        if ($BuildArgs.Count -eq 0) {
+            throw "there is no client in the panel and no client builder in this release."
+        }
+        Say 'building the game client. This is the long part -- 20 to 60 minutes.'
+        $code = Invoke-Docker $BuildArgs
+        if ($code -ne 0) {
+            throw "the client build failed: docker exited with $code. Its output is above this line."
+        }
+        $havePanelZip = ((Invoke-DockerQuiet @('compose','exec','-T','panel','test','-f',$PanelZip)).Code -eq 0)
+        if (-not $havePanelZip) {
+            throw "the client build finished but $PanelZip is not there."
+        }
+        Say 'the client is built and the panel is serving it.'
+    } else {
+        Say 'the panel already has a built client -- skipping the build'
+    }
+
+    if (-not $UnpackHere) {
+        Say 'this install is not local-only, so the client stays on the download page.'
+        return $true
+    }
+
+    # -- 2. is there room? ----------------------------------------------------
+    # The zip is copied out whole and then unpacked beside itself, so both
+    # exist at once. Roughly three times the zip, plus a margin. Running out
+    # half way is the failure this is here to avoid: it wastes twenty minutes
+    # and leaves a mess.
+    $size = 0
+    $probe = Invoke-DockerQuiet @('compose','exec','-T','panel','wc','-c',$PanelZip)
+    if ($probe.Code -eq 0 -and $probe.Output -match '(\d+)') { $size = [int64]$Matches[1] }
+    if ($size -gt 0) {
+        Say "the client is $(Show-Size $size)"
+        $need = ($size * 3) + 512MB
+        $free = 0
+        try { $free = (New-Object IO.DriveInfo([IO.Path]::GetPathRoot($InstallDir))).AvailableFreeSpace } catch { $free = 0 }
+        if ($free -gt 0 -and $free -lt $need) {
+            throw ("not enough disk space to unpack the game. About {0:N0} MB is needed on {1} and {2:N0} MB is free. Free some space and run this script again." -f `
+                   [math]::Round($need / 1MB), [IO.Path]::GetPathRoot($InstallDir), [math]::Round($free / 1MB))
+        }
+    } else {
+        Say 'could not measure the client, so the disk-space check was skipped'
+    }
+
+    # -- 3. copy it out of the panel's volume ---------------------------------
+    Remove-Item -LiteralPath $TmpZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    Say "copying it out of the panel. A gigabyte -- a couple of minutes."
+    $code = Invoke-Docker @('compose','cp',("panel:" + $PanelZip),$TmpZip)
+    if ($code -ne 0 -or -not (Test-Path -LiteralPath $TmpZip)) {
+        throw "the client could not be copied out of the panel (docker exited with $code)."
+    }
+    $got = (Get-Item -LiteralPath $TmpZip).Length
+    if ($size -gt 0 -and $got -ne $size) {
+        throw ("the copy came out {0:N0} bytes but the original is {1:N0} -- refusing to unpack it." -f $got, $size)
+    }
+    Say "copied $(Show-Size $got)"
+
+    # -- 4. unpack under a temporary name -------------------------------------
+    # The same rule the client builder uses when it publishes its zip: nothing
+    # is called by its final name until it is finished. A folder called
+    # "client" therefore always holds a complete game and never a partial one.
+    Say "unpacking into $TmpDir"
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($TmpZip, $TmpDir)
+    } catch {
+        $m = $_.Exception.Message
+        if ($_.Exception -is [System.IO.PathTooLongException] -or $m -match '(?i)too long') {
+            throw "the client could not be unpacked because the paths inside it are too long for Windows underneath $InstallDir. Install the server into a shorter folder -- C:\Metin2Server, say -- or switch on Windows' long-path support."
+        }
+        throw "the client could not be unpacked: $m"
+    }
+
+    # -- 5. is it actually a game? --------------------------------------------
+    $exe = Find-ClientExe $TmpDir
+    if (-not $exe) {
+        throw "there is no Metin2 launcher in the client that came out of the panel, so it was thrown away rather than left here pretending to be a game. Whatever is in $PanelZip is not a playable client."
+    }
+    Say "found the launcher: $(Split-Path -Leaf $exe)"
+
+    # The stamp goes in BEFORE the rename, so the folder is complete-and-marked
+    # the instant it acquires its final name. The launcher's path is rebuilt
+    # from the part below the temporary folder rather than by replacing text in
+    # it -- a string replace is case-sensitive and would silently produce a
+    # path that does not exist.
+    $stampTarget = Join-Path $ClientDir ($exe.Substring($TmpDir.Length).TrimStart('\'))
+    [IO.File]::WriteAllText((Join-Path $TmpDir $Stamp),
+                            ($stampTarget + "`r`n"),
+                            (New-Object System.Text.UTF8Encoding($false)))
+
+    # -- 6. into place --------------------------------------------------------
+    if (Test-Path -LiteralPath $ClientDir) {
+        throw "there is already a folder at $ClientDir but no game in it. Move it out of the way and run this script again."
+    }
+    Move-Item -LiteralPath $TmpDir -Destination $ClientDir
+    Remove-Item -LiteralPath $TmpZip -Force -ErrorAction SilentlyContinue
+    Say "the game is in $ClientDir"
+
+    if (-not (Test-Path -LiteralPath $stampTarget)) {
+        throw "the game moved into $ClientDir but $stampTarget is not there."
+    }
+
+    # -- 7. the shortcut ------------------------------------------------------
+    [void](Set-DesktopShortcut $stampTarget)
+    return $true
+}
+
+# ---------------------------------------------------------------------------
+$rc = 1
+try {
+    Set-Location -LiteralPath $InstallDir
+    if ($CachedArchive) { $env:M2_CLIENT_ARCHIVE = $CachedArchive }
+
+    Say ''
+    Say '=================================================================='
+    Say 'putting the game on this PC'
+
+    $lockTaken = Get-SetupLock
+    if (-not $lockTaken) {
+        Say 'another copy of this script is already running -- leaving it to finish.'
+        $rc = 0
+    }
+    elseif (Invoke-ClientSetup) {
+        Say 'done. The game is ready to play.'
+        $rc = 0
+    }
+}
+catch {
+    Say ''
+    Say '!!  the game could not be put on this PC.'
+    Say "    $($_.Exception.Message)"
+    Say ''
+    Say '    The server itself is untouched and still running -- this is only'
+    Say '    about getting the game onto the Desktop.'
+    Say "    You can still download the client from $PanelUrl/download"
+    Say '    once the build has finished.'
+    Say ''
+    Say '    To try again once the reason above is dealt with:'
+    Say "        powershell -ExecutionPolicy Bypass -File `"$SelfPath`""
+    $rc = 1
+}
+finally {
+    # Nothing half-finished is left lying about with a name that suggests it is
+    # ready. After a successful run both of these are already gone.
+    Remove-Item -LiteralPath $TmpZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($lockTaken) { Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue }
+
+    # This script's own standard output and error are redirected into two files
+    # in the temp folder by whoever started it, because there has to be
+    # somewhere for PowerShell itself to complain when the script cannot even
+    # be read. That is the one thing this log cannot capture, so anything in
+    # them is folded in here and there is one file to look at, this one.
+    #
+    # Read with FileShare.ReadWrite because one of them is this process's own
+    # standard output and Windows has it open. For the same reason the delete
+    # below only succeeds when these belong to an EARLIER launch -- which is
+    # the case when somebody runs this script by hand, and is why it is worth
+    # asking. The pair from a launch that is still running is cleared away by
+    # the next install instead.
+    foreach ($sideFile in @($HostOut, $HostErr)) {
+        if (-not $sideFile) { continue }
+        try {
+            if ((Test-Path -LiteralPath $sideFile) -and ((Get-Item -LiteralPath $sideFile).Length -gt 0)) {
+                $fs = New-Object System.IO.FileStream($sideFile, [IO.FileMode]::Open,
+                                                     [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                try {
+                    $sr = New-Object System.IO.StreamReader($fs)
+                    $body = $sr.ReadToEnd()
+                    $sr.Dispose()
+                } finally { $fs.Dispose() }
+                if ($body -and $body.Trim() -and $log) {
+                    $log.WriteLine("--- $(Split-Path -Leaf $sideFile) ---")
+                    $log.WriteLine($body.TrimEnd())
+                }
+            }
+        } catch { }
+        # Fails while whoever started us is still holding the handle -- that is
+        # the case where they fold these in themselves, so it is not a problem.
+        Remove-Item -LiteralPath $sideFile -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($log) { try { $log.Flush(); $log.Dispose() } catch { } }
+}
+exit $rc
+'@
+
+    [IO.File]::WriteAllText($path, ($head + $body), (New-Object System.Text.UTF8Encoding($false)))
+    return $path
+}
+
 function Start-ClientBuild {
     Write-Step 'The game client'
 
+    $script:ClientDir = Join-Path $script:InstallDir 'client'
+    $script:ClientLog = Join-Path $script:InstallDir 'client-build.log'
+
+    # A name of their own per launch, so that starting a second copy while an
+    # earlier one is still running cannot fail on a file the earlier one has
+    # open -- which would have looked like "the client build could not be
+    # started" and been nothing of the sort.
+    #
+    # Anything left from a previous install goes now. Windows holds these two
+    # open for as long as the process it started them for is alive, and that
+    # includes the process's own last breath: client-setup.ps1 cannot delete
+    # the file that IS its standard output, however politely it asks. So the
+    # next install does it. A pair still in use is locked and simply survives.
+    $tempDir = [IO.Path]::GetTempPath()
+    Get-ChildItem -LiteralPath $tempDir -Filter 'metin2-client-setup-*' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @('.out', '.err') } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+    $tag = '{0}-{1}' -f (Get-Date -Format 'yyyyMMddHHmmss'), $PID
+    $script:ClientHostOut = Join-Path $tempDir "metin2-client-setup-$tag.out"
+    $script:ClientHostErr = Join-Path $tempDir "metin2-client-setup-$tag.err"
+
+    # Always 1 on Windows -- Write-Configuration puts it there a few steps ago
+    # -- but read back rather than assumed, so that somebody who edited .env by
+    # hand gets the behaviour the file actually asks for.
+    $envPath = Join-Path $script:InstallDir '.env'
+    if (Test-Path -LiteralPath $envPath) {
+        $script:LocalOnly = ((Get-EnvValue $envPath 'M2_LOCAL_ONLY') -eq '1')
+    }
+
     if ($script:DryRun) {
         Write-Info '[dry-run] docker compose run --rm client-builder'
-        $script:ClientState = 'building'
+        if ($script:LocalOnly) {
+            Write-Info "[dry-run] then unpack it into $($script:ClientDir)"
+            Write-Info "[dry-run] and put a `"$($script:ShortcutName)`" shortcut on the Desktop"
+            $script:ClientState = 'local-working'
+        } else {
+            $script:ClientState = 'building'
+        }
         return
     }
 
-    if (Test-ClientZipPresent) {
-        Write-Good 'A patched client is already in place.'
-        $script:ClientState = 'ready'
-        return
+    # -- the fast path: it is all already here --------------------------------
+    if ($script:LocalOnly) {
+        $script:ClientExe = Get-LocalClientExe
+        if ($script:ClientExe) {
+            Write-Good 'The game is already unpacked on this PC.'
+            Write-Info $script:ClientExe
+            $script:ClientState = 'local-ready'
+            # One thing can still have gone missing on its own: people delete
+            # things off their Desktop. client-setup.ps1 notices in a second or
+            # two and puts it back -- and never touches one that is there. An
+            # existing copy of it is left exactly as it is: it was written by
+            # the install that built the client and knows how to build one
+            # again, which a fresh one written here would not.
+            $helper = Join-Path $script:InstallDir 'client-setup.ps1'
+            if (-not (Test-Path -LiteralPath $helper)) {
+                $helper = Write-ClientSetupScript -BuildArgs @() -ArchiveInContainer ''
+            }
+            # Waited for, unlike the real thing: with the game already here it
+            # has nothing to do but look at a shortcut, and waiting is what
+            # lets the two redirect files be tidied away afterwards.
+            try {
+                $p = Start-ClientSetupDetached $helper
+                [void]$p.WaitForExit(30000)
+            } catch { }
+            Merge-ClientSideLogs
+            return
+        }
+    } else {
+        if (Test-ClientZipPresent) {
+            Write-Good 'A patched client is already in place.'
+            $script:ClientState = 'ready'
+            return
+        }
     }
 
     # client-builder sits behind the "client" compose profile, so a plain
     # 'config --services' does not list it at all. 'run' turns the profile on by
     # itself, but this check has to ask for it explicitly.
     $svc = Invoke-ComposeQuiet @('--profile', 'client', 'config', '--services')
-    if (($svc.Output -split "`n" | ForEach-Object { $_.Trim() }) -notcontains 'client-builder') {
+    $haveBuilder = (($svc.Output -split "`n" | ForEach-Object { $_.Trim() }) -contains 'client-builder')
+    # A release with no builder is only a dead end when there is also no client
+    # in the panel: given one, everything after this -- copy out, unpack,
+    # shortcut -- still works and is still worth doing.
+    if (-not $haveBuilder -and -not (Test-ClientZipPresent)) {
         Write-Warn 'This release does not include the automatic client builder.'
-        Write-Warn 'The server works; there is just nothing to download yet.'
+        Write-Warn 'The server works; there is just nothing to play with yet.'
         Write-Warn ''
         Write-Warn 'To supply one yourself, put a client.zip whose serverinfo.py'
         Write-Warn 'points at 127.0.0.1 in place with:'
         Write-Warn "    cd `"$($script:InstallDir)`""
         Write-Warn '    docker compose cp .\client.zip panel:/usr/local/m2panel/client.zip'
         Write-Warn '    docker compose restart panel'
+        if ($script:LocalOnly) {
+            # Written even though there is nothing to build, so that the advice
+            # in the summary -- run this afterwards and the game unpacks itself
+            # onto the Desktop -- is true rather than aspirational.
+            [void](Write-ClientSetupScript -BuildArgs @() -ArchiveInContainer '')
+        }
         $script:ClientState = 'unavailable'
         return
     }
 
-    $script:ClientLog = Join-Path $script:InstallDir 'client-build.log'
     # The archive the source fetch already downloaded is the SAME file the
     # client builder wants: one package containing both Server/ and Client/.
     # The two keep separate caches, so without this it fetches its own copy --
@@ -1482,30 +2102,40 @@ function Start-ClientBuild {
     # The source cache is a Docker volume here rather than a host path, so we
     # mount it read-only and name the file instead of bind-mounting it.
     $reuseArgs = @()
-    try {
-        $findCmd = 'find /srccache/cache/archive -maxdepth 1 -type f -size +10M ' +
-                   "! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' " +
-                   "! -name '*.meta' 2>/dev/null | sort | head -1"
-        $probe = Invoke-Native 'docker' @(
-            'run','--rm','-v',"$($script:SrcVolume):/srccache:ro",
-            $script:FetcherImage,'sh','-c',$findCmd)
-        $cached = ($probe.Output -split "`n" |
-                   ForEach-Object { $_.Trim() } |
-                   Where-Object { $_ -like '/srccache/*' } |
-                   Select-Object -First 1)
-        if ($probe.Code -eq 0 -and $cached) {
-            # The volume name is safe on a command line; the FILE NAME is not.
-            # The archive is published as "[40250] Reference Serverfile-....zip"
-            # and Start-Process joins ArgumentList with spaces without quoting
-            # anything, so passing it as -e M2_CLIENT_ARCHIVE=<path> tore the
-            # value in half and docker read the remainder as a service name
-            # ("no such service: Reference"). The compose file already reads
-            # this variable from the environment, which has no such problem.
-            $reuseArgs = @('-v', "$($script:SrcVolume):/srccache:ro")
-            $env:M2_CLIENT_ARCHIVE = $cached
+    $cachedArchive = ''
+    if ($haveBuilder) {
+        try {
+            $findCmd = 'find /srccache/cache/archive -maxdepth 1 -type f -size +10M ' +
+                       "! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' " +
+                       "! -name '*.meta' 2>/dev/null | sort | head -1"
+            $probe = Invoke-Native 'docker' @(
+                'run','--rm','-v',"$($script:SrcVolume):/srccache:ro",
+                $script:FetcherImage,'sh','-c',$findCmd)
+            $cached = ($probe.Output -split "`n" |
+                       ForEach-Object { $_.Trim() } |
+                       Where-Object { $_ -like '/srccache/*' } |
+                       Select-Object -First 1)
+            if ($probe.Code -eq 0 -and $cached) {
+                # The volume name is safe on a command line; the FILE NAME is
+                # not. The archive is published as "[40250] Reference
+                # Serverfile-....zip", and anything that joins arguments with
+                # spaces tears that in half -- docker then read the remainder
+                # as a service name ("no such service: Reference"). It is
+                # written into client-setup.ps1 as a quoted string literal for
+                # exactly that reason, and set there as an environment
+                # variable, which the compose file already reads.
+                $reuseArgs = @('-v', "$($script:SrcVolume):/srccache:ro")
+                $cachedArchive = $cached
+            }
+        } catch {
+            # Not being able to look is not a reason to fail -- it just downloads.
         }
-    } catch {
-        # Not being able to look is not a reason to fail -- it just downloads.
+    }
+
+    $buildArgs = @()
+    if ($haveBuilder) {
+        # -T: no pseudo-terminal. Its output goes to a log file, not a console.
+        $buildArgs = @('compose','run','--rm','-T') + $reuseArgs + @('client-builder')
     }
 
     Write-Say 'Starting the client build in the background.'
@@ -1513,34 +2143,34 @@ function Start-ClientBuild {
         Write-Say 'It reuses the archive already downloaded for the server, so this'
         Write-Say 'is a repack rather than another download -- but repacking a'
         Write-Say 'gigabyte still takes a while, and longer on a slow disk.'
-    } else {
+    } elseif ($haveBuilder) {
         Write-Say 'It downloads over a gigabyte and then repacks it, so it takes a'
         Write-Say 'while -- often 20 to 60 minutes depending on your connection.'
     }
+    if ($script:LocalOnly) {
+        Write-Say ''
+        Write-Say 'When it is done it unpacks the game onto this PC by itself and'
+        Write-Say "puts a `"$($script:ShortcutName)`" shortcut on your Desktop. That"
+        Write-Say 'happens after this installer has finished, so there is nothing'
+        Write-Say 'to wait for and nothing to download.'
+    }
     Write-Say ''
-    Write-Say 'You do not have to wait. The server is usable now; the download'
-    Write-Say 'link simply starts working when this finishes.'
+    Write-Say 'You do not have to wait. The server is usable now.'
 
     '' | Set-Content -LiteralPath $script:ClientLog -Encoding ASCII
     # The builder bind-mounts ./client-archive so you can hand it a file rather
     # than have it download one. Create it here so Docker does not.
     New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'client-archive') | Out-Null
-    $errFile = $script:ClientLog + '.err'
+
+    $helper = Write-ClientSetupScript -BuildArgs $buildArgs -ArchiveInContainer $cachedArchive
     try {
-        # -T: no pseudo-terminal. Its output goes to a log file, not a console.
-        # -PassThru so we get the process back and can watch it below.
-        $proc = Start-Process -FilePath 'docker' `
-            -ArgumentList (@('compose','run','--rm','-T') + $reuseArgs + @('client-builder')) `
-            -WorkingDirectory $script:InstallDir `
-            -RedirectStandardOutput $script:ClientLog `
-            -RedirectStandardError  $errFile `
-            -WindowStyle Hidden -PassThru
+        $proc = Start-ClientSetupDetached $helper
     } catch {
         Write-Warn "The client build could not be started: $($_.Exception.Message)"
         $script:ClientState = 'failed'
         return
     }
-    $script:ClientState = 'building'
+    $script:ClientState = if ($script:LocalOnly) { 'local-working' } else { 'building' }
 
     # Watch it for a minute and a half before saying anything about it.
     #
@@ -1548,7 +2178,7 @@ function Start-ClientBuild {
     # gets it wrong in both directions: it calls a slow but healthy build
     # broken because the image build printed a warning, and it calls a build
     # that died thirty seconds in "still running", so the operator waits an
-    # hour for a link that was never coming. Watching the process itself
+    # hour for a game that was never coming. Watching the process itself
     # cannot be wrong about which of those happened.
     Write-Host ''
     Write-Host '  watching it for a moment to be sure it really started' -NoNewline
@@ -1556,33 +2186,27 @@ function Start-ClientBuild {
     while ((Get-Date) -lt $deadline) {
         if ($proc.HasExited) {
             Write-Host ''
-            # Fold stderr into the log before anyone is told where to look.
-            # Start-Process cannot send both streams to one file, and docker
-            # writes the interesting part -- the reason it refused to start --
-            # to stderr. Pointing someone at a log that is empty precisely when
-            # something went wrong is worse than not mentioning a log at all.
-            if ((Test-Path -LiteralPath $errFile) -and
-                ((Get-Item -LiteralPath $errFile).Length -gt 0)) {
-                Add-Content -LiteralPath $script:ClientLog -Value ''
-                Add-Content -LiteralPath $script:ClientLog -Value '--- error output ---'
-                Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue |
-                    Add-Content -LiteralPath $script:ClientLog
-                Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
-            }
-            if (Test-ClientZipPresent) {
-                Write-Good 'The client is built and in place -- that was quick.'
-                $script:ClientState = 'ready'
+            Merge-ClientSideLogs
+            if ($script:LocalOnly) { $script:ClientExe = Get-LocalClientExe }
+            $done = if ($script:LocalOnly) { [bool]$script:ClientExe } else { (Test-ClientZipPresent) }
+            if ($done) {
+                if ($script:LocalOnly) {
+                    Write-Good 'The game is unpacked and ready -- that was quick.'
+                    Write-Info $script:ClientExe
+                    $script:ClientState = 'local-ready'
+                } else {
+                    Write-Good 'The client is built and in place -- that was quick.'
+                    $script:ClientState = 'ready'
+                }
             } else {
-                Write-Warn 'The client build stopped almost immediately, so there'
-                Write-Warn 'is no download yet. The server itself is fine and'
-                Write-Warn 'everything else below still applies.'
+                Write-Warn 'That stopped almost immediately, so there is no game'
+                Write-Warn 'yet. The server itself is fine and everything else'
+                Write-Warn 'below still applies.'
                 Write-Warn ''
                 Write-Warn 'The last few lines of the log:'
-                foreach ($f in @($script:ClientLog, $errFile)) {
-                    if (Test-Path -LiteralPath $f) {
-                        foreach ($l in (Get-Content -LiteralPath $f -Tail 8 -ErrorAction SilentlyContinue)) {
-                            if ($l.Trim()) { Write-Warn "    $l" }
-                        }
+                if (Test-Path -LiteralPath $script:ClientLog) {
+                    foreach ($l in (Get-Content -LiteralPath $script:ClientLog -Tail 10 -ErrorAction SilentlyContinue)) {
+                        if ($l.Trim()) { Write-Warn "    $l" }
                     }
                 }
                 Write-Warn "Full log: $($script:ClientLog)"
@@ -1590,7 +2214,19 @@ function Start-ClientBuild {
             }
             return
         }
-        if (Test-ClientZipPresent) {
+        # On a local install a client.zip in the panel is only half the story --
+        # it still has to be copied out and unpacked -- so the finished game on
+        # disk is what is watched for here, not the zip.
+        if ($script:LocalOnly) {
+            $script:ClientExe = Get-LocalClientExe
+            if ($script:ClientExe) {
+                Write-Host ''
+                Write-Good 'The game is unpacked and ready.'
+                Write-Info $script:ClientExe
+                $script:ClientState = 'local-ready'
+                return
+            }
+        } elseif (Test-ClientZipPresent) {
             Write-Host ''
             Write-Good 'The client is built and in place.'
             $script:ClientState = 'ready'
@@ -1602,6 +2238,53 @@ function Start-ClientBuild {
     Write-Host ''
     Write-Good 'Still going after 90 seconds, which is what a real build looks like.'
     Write-Info "Watch it with:  Get-Content -Wait `"$($script:ClientLog)`""
+}
+
+# Start client-setup.ps1 so that it outlives this installer.
+#
+# Start-Process makes an independent process rather than a child that dies with
+# us, which is the whole point: the build is twenty to sixty minutes and this
+# script is going to print its summary and return long before that.
+#
+# The script path is quoted by hand. -ArgumentList joins its elements with
+# spaces and quotes nothing, so an install folder with a space in its name --
+# "C:\Users\Anne Marie\Metin2Server" -- would otherwise arrive as two arguments
+# and PowerShell would open a file called "C:\Users\Anne".
+function Start-ClientSetupDetached {
+    param([string]$ScriptPath)
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $ps)) { $ps = 'powershell.exe' }
+    return (Start-Process -FilePath $ps `
+        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                        '-File', ('"' + $ScriptPath + '"')) `
+        -WorkingDirectory $script:InstallDir `
+        -RedirectStandardOutput $script:ClientHostOut `
+        -RedirectStandardError  $script:ClientHostErr `
+        -WindowStyle Hidden -PassThru)
+}
+
+# client-setup.ps1 writes the client build log itself, one line at a time, so
+# the two files it is started with are normally empty: they exist only to catch
+# what PowerShell ITSELF says when the script cannot even be read -- a parse
+# error, an execution policy that blocks it. That is the one thing a script
+# cannot log about itself.
+#
+# They live in the temp folder rather than beside the log on purpose: the
+# person is told to look at one file, and two empty ones next to it invite the
+# question "which of these is it?". client-setup.ps1 folds them in and deletes
+# them when it is done, which is every case except the one where it is still
+# running and we are the ones who have to -- hence this.
+function Merge-ClientSideLogs {
+    foreach ($f in @($script:ClientHostOut, $script:ClientHostErr)) {
+        if (-not $f) { continue }
+        if ((Test-Path -LiteralPath $f) -and ((Get-Item -LiteralPath $f).Length -gt 0)) {
+            Add-Content -LiteralPath $script:ClientLog -Value ''
+            Add-Content -LiteralPath $script:ClientLog -Value "--- $(Split-Path -Leaf $f) ---"
+            Get-Content -LiteralPath $f -ErrorAction SilentlyContinue |
+                Add-Content -LiteralPath $script:ClientLog
+        }
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # =============================================================================
@@ -1623,9 +2306,42 @@ function Show-Summary {
     Write-Host ''
 
     # ------------------------------------------------------------------- 1
-    Write-Host '  1. THE GAME CLIENT -- this is what you play with' -ForegroundColor White
+    Write-Host '  1. THE GAME -- this is what you play with' -ForegroundColor White
     Write-Host ''
     switch ($script:ClientState) {
+        # The game is on this PC and playable. No link, because there is
+        # nothing to fetch: it was built here.
+        'local-ready' {
+            Write-Host "       Your Desktop -> `"$($script:ShortcutName)`"" -ForegroundColor Cyan
+            Write-Host ''
+            Write-Host '     Double-click it and you are in. It is already set up to'
+            Write-Host '     connect to the server on this PC -- there is nothing to'
+            Write-Host '     download and nothing to type in.'
+            Write-Host ''
+            Write-Host "     The game itself is in $($script:ClientDir)"
+            if ($script:ClientExe) {
+                Write-Host "     and starts from $(Split-Path -Leaf $script:ClientExe)."
+            }
+        }
+        # Being built and then unpacked, right here, by itself. Saying
+        # "download it from the panel" would be a lie on this machine.
+        'local-working' {
+            Write-Host "       Your Desktop -> `"$($script:ShortcutName)`"" -ForegroundColor Cyan
+            Write-Host ''
+            Write-Host '     It is not there yet.' -ForegroundColor Yellow
+            Write-Host '     The game is still being put together in the background: over'
+            Write-Host '     a gigabyte to repack, so give it 20 to 60 minutes. When it is'
+            Write-Host "     done it unpacks itself into $($script:ClientDir)"
+            Write-Host '     and that shortcut appears on your Desktop on its own.'
+            Write-Host ''
+            Write-Host '     You do not have to do anything, and you can close this window.'
+            Write-Host '     Watch it if you like:'
+            Write-Host "         Get-Content -Wait `"$($script:ClientLog)`""
+            Write-Host ''
+            Write-Host '     If the shortcut never turns up, that log says why -- and the'
+            Write-Host "     panel keeps a copy you can fetch by hand at $url/download"
+        }
+        # A server other people connect to: the download page is the point.
         'ready' {
             Write-Host "       $url/download" -ForegroundColor Cyan
             Write-Host ''
@@ -1645,20 +2361,29 @@ function Show-Summary {
             Write-Host "         Get-Content -Wait `"$($script:ClientLog)`""
         }
         'failed' {
-            Write-Host '       (not available -- the build failed)' -ForegroundColor Yellow
+            Write-Host '       (not available -- it stopped with an error)' -ForegroundColor Yellow
             Write-Host ''
-            Write-Host '     The client build stopped with an error. The server itself is'
-            Write-Host '     fine. The log is at:'
+            Write-Host '     The server itself is fine; only the game did not get built.'
+            Write-Host '     The log says what happened:'
             Write-Host "         $($script:ClientLog)"
+            Write-Host ''
+            Write-Host '     When you have dealt with what it says, try again with:'
+            Write-Host "         powershell -ExecutionPolicy Bypass -File `"$(Join-Path $script:InstallDir 'client-setup.ps1')`""
+            Write-Host ''
+            Write-Host "     If a client was built before it failed, $url/download"
+            Write-Host '     still has it.'
         }
         default {
-            Write-Host '       (no client yet)' -ForegroundColor Yellow
+            Write-Host '       (no game yet)' -ForegroundColor Yellow
             Write-Host ''
             Write-Host '     This release has no automatic client builder. Put your own'
             Write-Host '     client.zip in place with:'
             Write-Host "         cd `"$($script:InstallDir)`""
             Write-Host '         docker compose cp .\client.zip panel:/usr/local/m2panel/client.zip'
             Write-Host '         docker compose restart panel'
+            Write-Host ''
+            Write-Host '     ...and then, to unpack it here and get a Desktop shortcut:'
+            Write-Host "         powershell -ExecutionPolicy Bypass -File `"$(Join-Path $script:InstallDir 'client-setup.ps1')`""
         }
     }
     Write-Host ''
@@ -1751,6 +2476,14 @@ function Show-Summary {
     Write-Host '     The one dangerous command is "docker compose down -v".' -ForegroundColor Yellow
     Write-Host '     The -v deletes every account, character and item, with no undo.'
     Write-Host ''
+    if ($script:LocalOnly -and $script:ClientState -ne 'unavailable') {
+        Write-Host "     The game lives in $($script:ClientDir)." -ForegroundColor White
+        Write-Host '     If the Desktop shortcut goes missing, or the unpacking did not'
+        Write-Host '     finish, this puts it right -- and does nothing when there is'
+        Write-Host '     nothing to do:'
+        Write-Host "         powershell -ExecutionPolicy Bypass -File `"$(Join-Path $script:InstallDir 'client-setup.ps1')`""
+        Write-Host ''
+    }
     Write-Host '     The original server files are kept in a Docker volume, so'
     Write-Host '     re-installing never downloads them twice. Once you are happy'
     Write-Host '     with the server you can have those few gigabytes back:'

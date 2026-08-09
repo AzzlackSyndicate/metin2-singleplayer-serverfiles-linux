@@ -1065,6 +1065,40 @@ write_env() {
     #     volume at first start; changing .env afterwards does not change it.
     _root_pw=$(env_get "$_env" M2_DB_ROOT_PASSWORD || true)
     _db_pw=$(env_get "$_env" M2_DB_PASSWORD || true)
+    # A database volume that already exists, with NO password to go with it, is
+    # the one combination that cannot work -- and it fails in a way nobody can
+    # read. MariaDB only ever runs its setup on an EMPTY data directory: find a
+    # populated one and it keeps whatever passwords it was built with, ignoring
+    # everything we hand it. Generating fresh ones here would hand the game and
+    # the panel credentials the database has never heard of, and the only trace
+    # would be "Access denied for user 'metin2'" in a log nobody thinks to open.
+    #
+    # It happens by an ordinary route: install once, delete the install
+    # directory, install again. The directory held .env; the volume did not go
+    # with it.
+    if [ -z "$_db_pw" ] || [ -z "$_root_pw" ]; then
+        if docker volume inspect "$(stack_project)_db-data" >/dev/null 2>&1; then
+            die "There is already a database here from an earlier install, but the
+  passwords that go with it are gone -- they lived in the .env file in
+  $INSTALL_DIR, which is no longer there.
+
+  Nothing can recover them: they were never written anywhere else, on
+  purpose. So you have two ways forward.
+
+  Keep the characters and accounts, if you have that old .env somewhere
+  (a backup, another folder), by putting it back and running this again:
+
+      cp /path/to/old/.env $INSTALL_DIR/.env
+
+  Or start the database over -- this DELETES every character and account
+  on this server, and cannot be undone:
+
+      cd $INSTALL_DIR && docker compose down -v
+
+  then run this installer again. Everything else -- the built images, the
+  downloaded server files, the client -- is kept either way."
+        fi
+    fi
     if [ -z "$_root_pw" ]; then _root_pw=$(gen_secret); good "database root password: generated"
     else info "database root password: keeping the existing one"; fi
     if [ -z "$_db_pw" ]; then _db_pw=$(gen_secret); good "database password: generated"

@@ -62,6 +62,14 @@
 #                                                    FreeBSD binaries that the
 #                                                    Docker build never uses)
 #      --keep-archive 0|1    M2_SRC_KEEP_ARCHIVE     default 1
+#      --mega-user EMAIL     M2_SRC_MEGA_USER        sign in to MEGA, so the
+#      --mega-pass PASS      M2_SRC_MEGA_PASS        download is charged to YOUR
+#                                                    transfer quota instead of
+#                                                    the file owner's.  This is
+#                                                    the difference between the
+#                                                    link stalling at "509 over
+#                                                    quota" here and downloading
+#                                                    fine in a logged-in browser.
 #      --stall-minutes N     M2_SRC_STALL_MIN        give up on a download that
 #                                                    has not grown for N minutes
 #                                                    (default 5).  See MEGA note.
@@ -132,6 +140,10 @@ FORCE="${M2_SRC_FORCE:-}"
 NO_PREPARE="${M2_SRC_NO_PREPARE:-0}"
 SHARE_BIN="${M2_SRC_SHARE_BIN:-1}"
 KEEP_ARCHIVE="${M2_SRC_KEEP_ARCHIVE:-1}"
+# Optional MEGA sign-in. Anonymous downloads are billed to the file owner's
+# quota, which is regularly exhausted; signing in bills them to yours instead.
+MEGA_USER="${M2_SRC_MEGA_USER:-}"
+MEGA_PASS="${M2_SRC_MEGA_PASS:-}"
 STALL_MIN="${M2_SRC_STALL_MIN:-5}"
 QUIET="${M2_SRC_QUIET:-0}"
 MIN_FREE_MB="${M2_SRC_MIN_FREE_MB:-4000}"
@@ -149,6 +161,8 @@ while [ $# -gt 0 ]; do
         --force)          FORCE="${2:-}";         shift 2 ;;
         --stall-minutes)  STALL_MIN="${2:-}";     shift 2 ;;
         --keep-archive)   KEEP_ARCHIVE="${2:-}";  shift 2 ;;
+        --mega-user)      MEGA_USER="${2:-}";     shift 2 ;;
+        --mega-pass)      MEGA_PASS="${2:-}";     shift 2 ;;
         --no-prepare)     NO_PREPARE=1;           shift ;;
         --no-share-bin)   SHARE_BIN=0;            shift ;;
         --quiet)          QUIET=1;                shift ;;
@@ -322,11 +336,15 @@ quota_advice() {
     note "  anonymous share, not a dead link and not a fault here. It clears by"
     note "  itself, usually within a few hours. Three ways past it:"
     note ""
-    note "    1. Wait and run this again -- the partial download resumes."
-    note "    2. Download the file on a machine that has a MEGA account, copy it"
-    note "       across, and point this at it:"
+    note "    1. Sign in with a MEGA account of your own. The cap is on the"
+    note "       OWNER of the share, and signing in charges the transfer to you"
+    note "       instead -- which is why the same link often downloads fine in a"
+    note "       browser you are logged into while it stalls here:"
+    note "         $0 --mega-user you@example.com --mega-pass 'yourpassword'"
+    note "    2. Download it in that browser and point this at the file:"
     note "         $0 --archive /path/to/the.zip"
-    note "    3. Use any other copy of the same server files:"
+    note "    3. Wait and run this again -- the partial download resumes."
+    note "    4. Use any other copy of the same server files:"
     note "         $0 --url https://..."
 }
 
@@ -351,8 +369,31 @@ download() { # download URL DIR
 
     if url_is_mega "$_u"; then
         need_tools megatools
-        watched_download "$_d" "$_dlog" megatools dl --no-progress --path "$_d" "$_u"
+        # An anonymous download is charged to the quota of whoever OWNS the file.
+        # These server files sit on somebody else's free account, and that
+        # account's allowance runs out regularly -- which is why the same link
+        # can hang here at "509 over quota" while it downloads perfectly in a
+        # browser: a logged-in browser charges the transfer to YOUR quota
+        # instead. So if the operator has a MEGA account, use it.
+        #
+        # The credentials go into a config file rather than onto the command
+        # line: an argument list is world-readable in `ps' for as long as the
+        # download runs, and that is an hour.
+        _mega_cfg=""
+        if [ -n "$MEGA_USER" ] && [ -n "$MEGA_PASS" ]; then
+            _mega_cfg="$CACHE/.megarc"
+            ( umask 077; printf '[Login]\nUsername = %s\nPassword = %s\n' \
+                "$MEGA_USER" "$MEGA_PASS" > "$_mega_cfg" ) || _mega_cfg=""
+            [ -n "$_mega_cfg" ] && note "  signing in to MEGA as $MEGA_USER (uses your own transfer quota)"
+        fi
+        if [ -n "$_mega_cfg" ]; then
+            watched_download "$_d" "$_dlog" megatools dl --config "$_mega_cfg" \
+                             --no-progress --path "$_d" "$_u"
+        else
+            watched_download "$_d" "$_dlog" megatools dl --no-progress --path "$_d" "$_u"
+        fi
         _rc=$?
+        [ -n "$_mega_cfg" ] && rm -f "$_mega_cfg"
         if grep -q '509\|over quota' "$_dlog" 2>/dev/null && [ -z "$(finished_archive "$_d")" ]; then
             quota_advice
             return 1
