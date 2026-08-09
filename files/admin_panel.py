@@ -1369,7 +1369,6 @@ T = {
  "tip_patchlog": {"en":"The project's changelog: the version you are running, and — when there is one — the version that has been published since.",
                   "de":"Das Änderungsprotokoll des Projekts: die Version, die du fährst, und — falls vorhanden — die inzwischen veröffentlichte.",
                   "tr":"Projenin değişiklik günlüğü: çalıştırdığın sürüm ve — varsa — o zamandan beri yayımlanan sürüm."},
- "pl_local_t":   {"en":"What you are running","de":"Was bei dir läuft","tr":"Çalıştırdığın sürüm"},
  "pl_remote_t":  {"en":"What an update would bring","de":"Was ein Update bringen würde","tr":"Güncelleme ne getirir"},
  "pl_remote_hint":{"en":"Fetched from the project's repository as plain text and shown as text. Nothing in it is run, and nothing in it can add anything to this page.",
                   "de":"Als reiner Text aus dem Projekt-Repository geholt und als Text angezeigt. Nichts daraus wird ausgeführt, und nichts daraus kann dieser Seite etwas hinzufügen.",
@@ -2525,7 +2524,6 @@ docker compose --profile update up -d updater</pre>
 {% endif %}
 
 <div class="card">
-<h3>{{t('pl_local_t')}}</h3>
 {% if local %}<div class="md">{{local}}</div>
 {% else %}<p class="muted">{{t('pl_none')}}</p>{% endif %}
 </div>

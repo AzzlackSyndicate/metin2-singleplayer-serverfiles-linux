@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.1.7 — 2026-08-10
+
+### Changed
+
+- Removed the heading above the changelog on the patch log page. The file
+  brings its own, so there were two.
+
+---
+
 ## 1.1.6 — 2026-08-10
 
 ### Added
