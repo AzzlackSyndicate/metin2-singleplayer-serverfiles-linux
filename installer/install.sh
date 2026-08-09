@@ -909,18 +909,29 @@ fetch_stack() {
         FRESH_INSTALL=0
         good "A server is already installed in $INSTALL_DIR."
         say ""
-        say "Nothing here will be deleted. Your accounts, characters, items and"
-        say "guilds all live in a Docker volume that this installer never"
-        say "touches -- only 'docker compose down -v' would remove them, and"
-        say "this script never runs that."
+        say "This will bring it up to the published version. Nothing here will"
+        say "be deleted: your accounts, characters, items and guilds live in a"
+        say "Docker volume that this installer never touches -- only"
+        say "'docker compose down -v' would remove them, and this script never"
+        say "runs that. Your settings in .env are kept as they are."
         say ""
-        if ! ask_yes_no "Continue, updating the settings and restarting the server?" "y"; then
+        say "Players are disconnected while the server restarts."
+        say ""
+        if ! ask_yes_no "Continue, updating this server to the published version?" "y"; then
             say ""
             say "Left alone. To manage the existing server:"
             say "    cd $INSTALL_DIR && docker compose ps"
             exit 0
         fi
-        return 0
+        # Deliberately NOT returning here. This used to stop at this point, so
+        # re-running the installer rewrote .env, restarted the containers and
+        # changed nothing else -- the checkout was never refreshed and the build
+        # context in $INSTALL_DIR stayed exactly as it was, which meant the
+        # rebuild had nothing new to build. "Run it again to update" was untrue,
+        # and it is the sentence the panel now shows people. Falling through
+        # does the same work a first install does: refresh the checkout, restage
+        # the context, copy it over. The copy is a tar stream, so it writes only
+        # what it carries and .env and docker-compose.override.yml survive it.
     fi
 
     # -- 1. a build context somebody prepared earlier -------------------------

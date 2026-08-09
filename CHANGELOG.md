@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.1.2 — 2026-08-10
+
+### Fixed
+
+- Re-running the installer on a server that was already installed now updates
+  it. It used to rewrite the settings and restart the containers without
+  fetching anything, so the server stayed on the version it was installed with.
+
+---
+
 ## 1.1.1 — 2026-08-10
 
 ### Changed
