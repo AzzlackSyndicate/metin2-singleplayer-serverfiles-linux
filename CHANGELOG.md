@@ -17,6 +17,18 @@ every version here.
 
 ---
 
+## 1.1.3 — 2026-08-10
+
+### Changed
+
+- When a server is already installed, the installer shows which version it is
+  on and which one is published, then asks whether to update or to only
+  re-apply the settings and restart.
+- A server installed before versions existed is recognised as such and offered
+  the update.
+
+---
+
 ## 1.1.2 — 2026-08-10
 
 ### Fixed

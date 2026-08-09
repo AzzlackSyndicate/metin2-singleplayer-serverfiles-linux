@@ -902,6 +902,43 @@ run_fetch_sources() {
     esac
 }
 
+# The version this machine is running, from the build context the panel image
+# was made out of. Empty when it cannot be told -- which is not an error: every
+# server installed before versions existed has no such file, and there are more
+# of those than of any other kind right now.
+installed_version() {
+    _v=""
+    [ -f "$INSTALL_DIR/panel/app/VERSION" ] && _v=$(head -1 "$INSTALL_DIR/panel/app/VERSION" 2>/dev/null | tr -d '\r\n \t')
+    printf '%s' "$_v"
+}
+
+# The version published in the repository. Empty when it cannot be fetched --
+# no network, GitHub down, a proxy in the way. Never a reason to stop; the
+# question then simply becomes the one it used to be.
+published_version() {
+    have curl || { printf ''; return 0; }
+    _u="${M2_VERSION_URL:-$(printf '%s' "$M2_INSTALLER_URL" | sed 's#/installer/install\.sh$#/VERSION#')}"
+    _v=$(curl -fsSL --max-time 12 "$_u" 2>/dev/null | head -1 | tr -d '\r\n \t')
+    case "$_v" in
+        [0-9]*.[0-9]*.[0-9]*) printf '%s' "$_v" ;;
+        *)                    printf '' ;;
+    esac
+}
+
+# a.b.c > x.y.z ? Pure shell, no sort -V: busybox and some minimal images do
+# not have it, and this has to work everywhere the installer does.
+version_gt() {
+    _a="${1:-0.0.0}"; _b="${2:-0.0.0}"
+    for _i in 1 2 3; do
+        _x=$(printf '%s' "$_a" | cut -d. -f$_i); _y=$(printf '%s' "$_b" | cut -d. -f$_i)
+        _x=${_x:-0}; _y=${_y:-0}
+        case "$_x$_y" in *[!0-9]*) return 1 ;; esac
+        [ "$_x" -gt "$_y" ] && return 0
+        [ "$_x" -lt "$_y" ] && return 1
+    done
+    return 1
+}
+
 fetch_stack() {
     step "The server files"
 
@@ -909,19 +946,63 @@ fetch_stack() {
         FRESH_INSTALL=0
         good "A server is already installed in $INSTALL_DIR."
         say ""
-        say "This will bring it up to the published version. Nothing here will"
-        say "be deleted: your accounts, characters, items and guilds live in a"
-        say "Docker volume that this installer never touches -- only"
-        say "'docker compose down -v' would remove them, and this script never"
-        say "runs that. Your settings in .env are kept as they are."
+        say "Nothing here will be deleted. Your accounts, characters, items and"
+        say "guilds live in a Docker volume that this installer never touches --"
+        say "only 'docker compose down -v' would remove them, and this script"
+        say "never runs that. Your settings in .env are kept either way."
         say ""
-        say "Players are disconnected while the server restarts."
+
+        _have=$(installed_version)
+        _new=$(published_version)
+
+        if [ -n "$_have" ]; then
+            say "  This server:   $_have"
+        else
+            # No VERSION file at all: installed before this project had them.
+            say "  This server:   unknown -- installed before versions were added"
+        fi
+        if [ -n "$_new" ]; then
+            say "  Published:     $_new"
+        else
+            say "  Published:     could not be checked just now"
+        fi
         say ""
-        if ! ask_yes_no "Continue, updating this server to the published version?" "y"; then
+
+        # Offer the update when the published version is genuinely newer, and
+        # also when the local one cannot be read at all -- an install with no
+        # VERSION predates them, so anything published is newer than it.
+        _outdated=0
+        if [ -n "$_new" ]; then
+            if [ -z "$_have" ] || version_gt "$_new" "$_have"; then _outdated=1; fi
+        fi
+
+        if [ "$_outdated" = "1" ]; then
+            say "Updating rebuilds the server from the published version and"
+            say "restarts it, which disconnects anyone playing for a minute or"
+            say "two. Answering no re-applies your settings and restarts, and"
+            say "leaves the version you have alone."
             say ""
-            say "Left alone. To manage the existing server:"
-            say "    cd $INSTALL_DIR && docker compose ps"
-            exit 0
+            if ask_yes_no "Update this server to $_new?" "y"; then
+                say ""
+                say "Updating to $_new."
+                # falls through -- see the note below
+            else
+                say ""
+                say "Keeping the version you have."
+                return 0
+            fi
+        else
+            if [ -n "$_new" ] && [ -n "$_have" ]; then
+                say "That is the newest published version."
+            fi
+            say ""
+            if ! ask_yes_no "Re-apply the settings and restart the server?" "y"; then
+                say ""
+                say "Left alone. To manage the existing server:"
+                say "    cd $INSTALL_DIR && docker compose ps"
+                exit 0
+            fi
+            return 0
         fi
         # Deliberately NOT returning here. This used to stop at this point, so
         # re-running the installer rewrote .env, restarted the containers and
