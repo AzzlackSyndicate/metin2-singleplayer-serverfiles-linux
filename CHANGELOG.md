@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.1.9 — 2026-08-10
+
+### Changed
+
+- The patch log shows the changelog once. When an update was available it was
+  printed twice, under two headings, with the same releases in both.
+
+---
+
 ## 1.1.8 — 2026-08-10
 
 ### Changed
