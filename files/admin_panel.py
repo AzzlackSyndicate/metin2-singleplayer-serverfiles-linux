@@ -1383,13 +1383,15 @@ T = {
                   "tr":"Sende {cur} çalışıyor. {new} mevcut."},
  "upd_avail_short":{"en":"update available","de":"Update verfügbar","tr":"güncelleme var"},
  "upd_see":      {"en":"See what it brings","de":"Ansehen, was es bringt","tr":"Neler getirdiğine bak"},
+ "pl_card_t":    {"en":"Version and changes","de":"Version und Änderungen","tr":"Sürüm ve değişiklikler"},
+ "pl_open":      {"en":"📜 Open the patch log","de":"📜 Patchlog öffnen","tr":"📜 Sürüm notlarını aç"},
  "upd_none":     {"en":"This is the newest published version.","de":"Das ist die neueste veröffentlichte Version.","tr":"Bu, yayımlanan en yeni sürüm."},
  "upd_never":    {"en":"Not checked yet — the first check happens a couple of minutes after the panel starts.",
                   "de":"Noch nicht geprüft — die erste Prüfung läuft ein paar Minuten nach dem Start des Panels.",
                   "tr":"Henüz kontrol edilmedi — ilk kontrol panel başladıktan birkaç dakika sonra yapılır."},
- "upd_failed":   {"en":"Could not check — no answer from the internet. Nothing is wrong with your server; it will try again later.",
-                  "de":"Prüfung nicht möglich — keine Antwort aus dem Internet. Mit deinem Server ist alles in Ordnung; es wird später erneut versucht.",
-                  "tr":"Kontrol edilemedi — internetten yanıt yok. Sunucunda bir sorun yok; daha sonra tekrar denenecek."},
+ "upd_failed":   {"en":"The update server could not be reached.",
+                  "de":"Zugriff auf den Update-Server war nicht möglich.",
+                  "tr":"Güncelleme sunucusuna ulaşılamadı."},
  "upd_checked":  {"en":"Last checked","de":"Zuletzt geprüft","tr":"Son kontrol"},
  "upd_off_t":    {"en":"The update check is switched off","de":"Die Update-Prüfung ist ausgeschaltet","tr":"Güncelleme kontrolü kapalı"},
  "upd_off":      {"en":"This panel is not contacting anything at all. You will not be told when a newer version appears; look at the project page when you want to know. To switch it back on, set M2_UPDATE_CHECK=1 in .env and restart the panel.",
@@ -1923,13 +1925,19 @@ __BODY__
    Findable: it is on every admin page and it is the way into the patch log.
    Unobtrusive: it is one grey line. Not public: a player has no use for the
    number and an attacker has a very specific one. #}
-{% if is_admin %}
+{# The number itself is harmless and useful -- it is the first thing anybody
+   asks for when something is wrong. The changelog and the update notice are
+   not: they belong to whoever runs the server, so they only appear away from
+   the front page, where only the operator goes. #}
 <div class="wrap" style="padding-top:0;text-align:center">
 <span class="muted" style="font-size:12px">
+{% if is_admin and request.endpoint != 'login' %}
 <a href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}" style="color:inherit">{{t('ver_label')}} {{ panel_version if panel_version else t('ver_unknown') }}</a>
 {% if upd.available %} · <a href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">⬆️ {{t('upd_avail_short')}}</a>{% endif %}
-</span></div>
+{% else %}
+{{t('ver_label')}} {{ panel_version if panel_version else t('ver_unknown') }}
 {% endif %}
+</span></div>
 </body></html>"""
 
 TPL_LOGIN = BASE.replace("__BODY__", """
@@ -2179,15 +2187,20 @@ TPL_DASH = BASE.replace("__BODY__", """
  show.addEventListener('click',function(e){ e.preventDefault(); try{localStorage.removeItem(KEY);}catch(e){} apply(false); });
 })();
 </script>
-{# Only when there really is something newer, and only here -- the front page
-   belongs to the players and none of this is their business. #}
+{# Always here, so the changelog is one click away rather than a grey line at
+   the bottom of the page. It lights up by itself when there is something to
+   fetch. Only on the admin side -- the front page belongs to the players. #}
+<div class="card{% if upd.available %} onboard{% endif %}">
+<h3>{% if upd.available %}⬆️ {{t('upd_avail_t')}}{% else %}📜 {{t('pl_card_t')}}{% endif %}</h3>
 {% if upd.available %}
-<div class="card onboard">
-<h3>⬆️ {{t('upd_avail_t')}}</h3>
 <p class="muted">{{ t('upd_avail').replace('{cur}', upd.current or t('ver_unknown')).replace('{new}', upd.latest) }}</p>
-<a class="btn" href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">{{t('upd_see')}}</a>
-</div>
+<a class="btn big glow" href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">{{t('upd_see')}}</a>
+{% else %}
+<p class="muted">{{t('ver_label')}} <b>{{ panel_version if panel_version else t('ver_unknown') }}</b>.
+{% if not upd.enabled %}{{t('upd_off_t')}}.{% elif upd.error %}{{t('upd_failed')}}{% elif not upd.checked %}{{t('upd_never')}}{% else %}{{t('upd_none')}}{% endif %}</p>
+<a class="btn" href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">{{t('pl_open')}}</a>
 {% endif %}
+</div>
 <div class="card">
 <h3 class="help" title="{{t('tip_rates')}}">{{t('rates_nav')}}</h3>
 <p class="muted">{{t('rates_dash_hint')}}</p>

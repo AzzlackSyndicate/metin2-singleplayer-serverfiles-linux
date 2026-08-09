@@ -17,6 +17,19 @@ every version here.
 
 ---
 
+## 1.1.1 — 2026-08-10
+
+### Changed
+
+- The patch log has its own card in the admin area, with a button. It used to
+  be a grey line at the bottom of the page.
+- The card highlights itself when a newer version is available.
+- The front page shows the version number only. The patch log and the update
+  notice are in the admin area.
+- Shorter wording when the update check cannot reach the server.
+
+---
+
 ## 1.1.0 — 2026-08-09
 
 ### Added
