@@ -233,6 +233,30 @@ services:
       M2PANEL_RATES_STATUS: "/opt/m2spool/rates.status"
       M2PANEL_RATES_SPOOL: "/opt/m2spool"
 
+      # Once a day the panel asks the project's repository what the newest
+      # published version is, and says so in the admin area when it is behind.
+      # This is the ONLY part of this stack that contacts the internet by
+      # itself. Set M2_UPDATE_CHECK=0 and it contacts nothing at all; nothing
+      # else about the panel changes. The panel's own patch-log page explains
+      # this in the operator's language, including what GitHub gets to see.
+      M2PANEL_UPDATE_CHECK: "${M2_UPDATE_CHECK:-1}"
+
+      # Whether the panel may offer a button that installs an update. Off, and
+      # meant to stay off on anything with a public address: see UPDATING.md.
+      # Even set to 1 it does nothing on its own -- the work is done by the
+      # `updater' service below, which is in a profile and is not started by
+      # `docker compose up -d'.
+      M2PANEL_UPDATE_APPLY: "${M2_UPDATE_APPLY:-0}"
+      M2PANEL_UPDATE_SPOOL: "/opt/m2update"
+      # The one command that updates THIS install, shown on the update page.
+      # The installers know it -- they know the URL they were fetched from and
+      # the options they were given -- so they write it here and the panel just
+      # repeats it. Empty falls back to the by-hand sequence, which is right for
+      # a stack somebody assembled themselves. On Windows this is the entire
+      # update mechanism: the installer is idempotent, so running it again is
+      # the update, and nothing has to sit in the background waiting to do it.
+      M2PANEL_UPDATE_COMMAND: "${M2_UPDATE_COMMAND:-}"
+
       TZ: "${M2_TZ:-UTC}"
 
     ports:
@@ -250,6 +274,13 @@ services:
       # The other end of the rate spool. Same volume, same path as in the game
       # container, so a request written here is the file read over there.
       - rates-spool:/opt/m2spool
+
+      # The same arrangement again for updates: the panel leaves a request in
+      # here, the updater (below, and only when the operator starts it) reads
+      # it and writes back how it is going. A directory, not the Docker socket
+      # -- the panel is the internet-facing process in this stack and the
+      # socket is root on the host.
+      - update-spool:/opt/m2update
 
     networks: [backend]
 
@@ -330,6 +361,70 @@ services:
     # two volumes. It can be run before the server is even up.
     networks: [backend]
 
+  # ---------------------------------------------------------------------------
+  # The updater. OFF, and off is the default that should usually be kept.
+  #
+  # It exists so that "update this server from the panel" does not mean "give
+  # the internet-facing web application the Docker socket". The socket is root
+  # on the host: whatever holds it can start a container with / mounted inside
+  # it. So it is mounted here, into one shell script that does one fixed thing,
+  # and not into the panel, which takes registrations from strangers, sends
+  # password links and serves a gigabyte file.
+  #
+  # It is in a profile, so `docker compose up -d' does not start it, does not
+  # build it, and does not stop it. Starting it is a deliberate act:
+  #
+  #     docker compose --profile update up -d updater
+  #
+  # and it is only half of the switch -- the panel shows no button unless
+  # M2_UPDATE_APPLY=1 as well. Read UPDATING.md before doing either. On a
+  # server other people can reach, leaving this alone is the right answer, and
+  # updating by hand takes one paste.
+  #
+  # The two host directories are mounted at the SAME path they have on the
+  # host. That is required, not cosmetic: `docker compose' passes paths to the
+  # daemon, and the daemon resolves the compose file's relative bind mounts
+  # against the host's filesystem.
+  # ---------------------------------------------------------------------------
+  updater:
+    build:
+      context: ./updater
+      dockerfile: Dockerfile
+    image: metin2/updater:latest
+    container_name: metin2-updater
+    profiles: ["update"]
+    restart: unless-stopped
+    init: true
+
+    environment:
+      M2_UPDATE_SPOOL: "/opt/m2update"
+      # Where the installed stack is -- the directory holding this file.
+      M2_UPDATE_STACK_DIR: "${M2_UPDATE_STACK_DIR:-/opt/metin2/stack}"
+      # Where install.sh put the source cache and the git checkout inside it.
+      M2_UPDATE_CACHE_DIR: "${M2_UPDATE_CACHE_DIR:-/var/cache/m2src}"
+      M2_UPDATE_REPO_DIR: "${M2_UPDATE_REPO_DIR:-/var/cache/m2src/repo}"
+      M2_UPDATE_BRANCH: "${M2_UPDATE_BRANCH:-main}"
+      TZ: "${M2_TZ:-UTC}"
+
+    volumes:
+      # The request/response directory shared with the panel. This is the whole
+      # of the interface between them: the panel can leave a file here and can
+      # read what this writes back. It cannot reach anything else in here.
+      - update-spool:/opt/m2update
+
+      # The host's Docker daemon. This is the dangerous mount in this file, and
+      # it is confined to this service on purpose. Read UPDATING.md.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Same path inside as outside -- see above.
+      - "${M2_UPDATE_STACK_DIR:-/opt/metin2/stack}:${M2_UPDATE_STACK_DIR:-/opt/metin2/stack}"
+      - "${M2_UPDATE_CACHE_DIR:-/var/cache/m2src}:${M2_UPDATE_CACHE_DIR:-/var/cache/m2src}"
+
+    # Not on `backend': it has no business talking to the database or the game,
+    # and the only network it needs is the one out to the project's repository.
+    # Compose gives it the default network, which is created only when this
+    # service is actually started.
+
 # =============================================================================
 volumes:
   # Named volumes, not bind mounts: they survive `docker compose down', are
@@ -343,6 +438,11 @@ volumes:
   # status file. It is a volume rather than a bind mount only so that the two
   # containers can share it without anything on the host having to exist.
   rates-spool:
+  # The same again for updates: one request file, one status file, one log.
+  # Created whether or not the updater is ever started -- an empty directory
+  # costs nothing, and it means the panel can say "the updater is not running"
+  # instead of failing to write anywhere.
+  update-spool:
   # The downloaded server-file archive and the built client -- roughly 3 GB.
   # Everything in it can be fetched again, but fetching it again means another
   # 1.4 GB over somebody else's MEGA share, so it is worth keeping. Only

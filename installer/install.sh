@@ -70,6 +70,9 @@ set -eu
 #      M2_LOCAL_CONTEXT=/path/to/linux-port/docker   sh install.sh
 # -----------------------------------------------------------------------------
 M2_REPO_URL="${M2_REPO_URL:-https://github.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux.git}"
+# Where this script itself lives. The panel shows it as the way to update, so
+# an operator who fetched this from somewhere else gets told to go back there.
+M2_INSTALLER_URL="${M2_INSTALLER_URL:-https://raw.githubusercontent.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/main/installer/install.sh}"
 M2_REPO_DIR="${M2_REPO_DIR:-}"
 M2_LOCAL_CONTEXT="${M2_LOCAL_CONTEXT:-}"
 
@@ -1149,6 +1152,13 @@ write_env() {
     # address: with --domain the panel also binds to 127.0.0.1, but the server
     # is thoroughly public. Only --local means genuinely local.
     env_set "$_env" M2_LOCAL_ONLY "$([ "$LOCAL_ONLY" = "1" ] && echo 1 || echo 0)"
+
+    # How this machine updates, in one line, for the panel to show when a newer
+    # version appears. This installer is idempotent -- it pulls the published
+    # version, rebuilds and restarts, and keeps the database, the passwords and
+    # the settings -- so re-running it IS the update. Anyone who would rather
+    # not pipe a script into a shell has the step-by-step in UPDATING.md.
+    env_set "$_env" M2_UPDATE_COMMAND "curl -fsSL $M2_INSTALLER_URL | sudo sh"
 
     # Where the panel listens on the host.
     #

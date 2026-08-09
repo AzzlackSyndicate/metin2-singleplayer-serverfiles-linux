@@ -3,11 +3,17 @@
 # Metin2 Admin Panel v2 - built for non-technical users
 # Config: /usr/local/etc/m2panel.conf  (M2PANEL_CONF to move it)
 # =============================================================
-import datetime, json, os, re, socket, sys, threading, time, hashlib, hmac, secrets, sqlite3, subprocess
+import datetime, json, os, random, re, socket, sys, threading, time, hashlib, hmac, secrets, sqlite3, subprocess
+import urllib.request, urllib.error
 from functools import wraps
 from flask import Flask, request, session, redirect, url_for, render_template_string, flash, send_file, jsonify
 from flask import has_request_context
 from flask.sessions import SecureCookieSessionInterface
+# markupsafe is Jinja2's own escaping library and therefore already installed
+# wherever Flask is -- it is not a new dependency. The patch-log page needs it
+# to turn a Markdown file fetched over the network into something that can be
+# put on a page without it being able to put anything ON the page.
+from markupsafe import escape, Markup
 import pymysql
 
 # ---- where everything lives -------------------------------------------------
@@ -336,7 +342,12 @@ REQUIRED_CONF = ("flask_secret", "db_user", "db_pass", "salt", "pass_hash")
 ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash",
             "bind", "port", "brand", "client_url", "client_name",
             "inventory_slots", "max_item_count", "status_ports", "local_only",
-            "contact_email")
+            "contact_email", "update_check", "update_apply", "update_command")
+
+# The settings that are a yes or a no. Written out rather than guessed from the
+# value, so that "0" means off everywhere instead of meaning off in some places
+# and "a non-empty string, therefore on" in others.
+BOOL_CONF = ("local_only", "update_check", "update_apply")
 
 def _conf_from_env():
     """The config keys the environment sets, already turned into the right type."""
@@ -350,12 +361,14 @@ def _conf_from_env():
                 out[key] = int(raw)
             except ValueError:
                 continue                      # nonsense value: let the default stand
-        elif key == "local_only":
-            # Whether this server is reachable only from the machine it runs on.
-            # It cannot be inferred from "bind": a Linux server behind nginx
-            # also binds the panel to 127.0.0.1 while being perfectly public,
-            # and guessing there would tell a working host that nobody can
-            # reach it. So the installer states it, and the default is "no".
+        elif key in BOOL_CONF:
+            # local_only: whether this server is reachable only from the machine
+            # it runs on. It cannot be inferred from "bind": a Linux server
+            # behind nginx also binds the panel to 127.0.0.1 while being
+            # perfectly public, and guessing there would tell a working host
+            # that nobody can reach it. So the installer states it, and the
+            # default is "no".
+            # update_check / update_apply: see the version block further down.
             out[key] = raw.lower() in ("1", "true", "yes", "on")
         elif key == "status_ports":
             # "11002,13000" -> [11002, 13000]
@@ -476,6 +489,484 @@ def _clean_client_url(u):
     return ""
 
 CLIENT_URL = _clean_client_url(CONF.get("client_url", ""))
+
+# =============================================================================
+#  Which version this is, and whether a newer one has been published.
+#
+#  Three separate things, deliberately kept separate:
+#
+#    1. the version      baked into the image at build time; a fact, no network
+#    2. the check        one HTTPS request a day to the project's repository,
+#                        switchable off, and harmless when it fails
+#    3. applying it      off unless the operator switches it on, and even then
+#                        this file does not perform the update -- see the
+#                        "update request" block further down
+#
+#  The only one of the three that touches the internet is (2), and it is the
+#  only thing in this entire project that contacts anything by itself. That is
+#  worth stating plainly rather than burying, so the panel says so on its own
+#  patch-log page, in the operator's language, with the setting that turns it
+#  off written out.
+# =============================================================================
+
+# MAJOR.MINOR.PATCH and nothing else. Anything that does not match this is not
+# a version as far as this panel is concerned -- which is what makes a fetched
+# VERSION file safe to act on: it is either three numbers or it is ignored.
+_SEMVER_RE = re.compile(r"^(\d{1,5})\.(\d{1,5})\.(\d{1,5})$")
+
+def semver(s):
+    """(major, minor, patch) or None when this is not a version string."""
+    m = _SEMVER_RE.match(str(s or "").strip())
+    return tuple(int(g) for g in m.groups()) if m else None
+
+def semver_newer(candidate, current):
+    """Is 'candidate' strictly newer than 'current'?
+
+    False whenever either one cannot be read as a version. An unknown current
+    version therefore never produces an update notice -- the honest answer to
+    "are you behind?" when you do not know what you are is "I cannot say", and
+    an unknown version is far more likely to be a development checkout than an
+    old release.
+    """
+    a, b = semver(candidate), semver(current)
+    return bool(a and b and a > b)
+
+# VERSION and CHANGELOG.md are staged next to admin_panel.py by
+# prepare-context.sh and baked into the panel image. In a source checkout they
+# are one level up (files/admin_panel.py, VERSION at the root), which is the
+# second place looked at, so a developer running this straight out of the tree
+# sees the right number too.
+VERSION_FILE   = _env_path("M2PANEL_VERSION_FILE", os.path.join(_HERE, "VERSION"))
+CHANGELOG_FILE = _env_path("M2PANEL_CHANGELOG", os.path.join(_HERE, "CHANGELOG.md"))
+
+# How much changelog is ever held or rendered, local or fetched. A changelog
+# grows by a few hundred bytes a release, so this is years of them; it is here
+# to put a number on "text from the network" rather than to be reached.
+CHANGELOG_MAX = 200_000
+
+def _read_text_file(path, limit):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return ""
+
+def _read_version():
+    env = os.environ.get("M2PANEL_VERSION", "").strip()
+    if semver(env):
+        return env
+    for path in (VERSION_FILE, os.path.join(_HERE, os.pardir, "VERSION")):
+        raw = _read_text_file(path, 64).strip().splitlines()
+        if raw and semver(raw[0]):
+            return raw[0].strip()
+    return ""          # unknown, and said as "unknown" -- never invented
+
+PANEL_VERSION = _read_version()
+
+def local_changelog():
+    """The changelog for the build that is running, or "" when it is not here."""
+    for path in (CHANGELOG_FILE, os.path.join(_HERE, os.pardir, "CHANGELOG.md")):
+        text = _read_text_file(path, CHANGELOG_MAX)
+        if text.strip():
+            return text
+    return ""
+
+# ---- the check --------------------------------------------------------------
+# Where the published files are. Raw text over HTTPS, from a fixed path: no API,
+# no HTML, no redirect chain to somewhere interesting, and nothing that is ever
+# executed, unpacked or written to disk as code. Two files are read and only
+# two: VERSION (64 bytes, and only three numbers of it are believed) and
+# CHANGELOG.md (text, escaped before it is ever shown).
+UPDATE_BASE_URL = _env_path(
+    "M2PANEL_UPDATE_URL",
+    "https://raw.githubusercontent.com/AzzlackSyndicate/"
+    "metin2-singleplayer-serverfiles-linux/main")
+
+UPDATE_TIMEOUT  = 8             # seconds, hard, on every network operation
+UPDATE_EVERY    = 24 * 3600     # after a successful check
+UPDATE_RETRY    = 6 * 3600      # after a failed one -- four tries a day at most
+UPDATE_STATE    = _env_path("M2PANEL_UPDATE_STATE", os.path.join(PANEL_DIR, "update.json"))
+
+# On unless the operator turns it off. Off is a supported, first-class state:
+# nothing in the panel degrades, no page changes shape, and the patch log still
+# shows the changelog of the build that is running.
+UPDATE_CHECK = bool(CONF.get("update_check", True)) and UPDATE_BASE_URL.startswith("https://")
+
+# Cached across restarts, on the panel's data volume: a restart is not a reason
+# to ask GitHub anything, and on a server that is restarted often it would turn
+# "once a day" into "every few minutes".
+_UPD = {"checked": 0.0,   # last SUCCESSFUL check
+        "tried":   0.0,   # last attempt, successful or not
+        "latest":  "",    # last version seen published
+        "notes":   "",    # its changelog, fetched only when it is newer
+        "error":   ""}    # short, non-technical reason the last attempt failed
+
+_UPD_LOCK = threading.Lock()
+
+def _upd_load():
+    try:
+        with open(UPDATE_STATE, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(saved, dict):
+        return
+    with _UPD_LOCK:
+        for key in ("checked", "tried"):
+            try:
+                _UPD[key] = float(saved.get(key) or 0.0)
+            except (TypeError, ValueError):
+                pass
+        latest = str(saved.get("latest") or "")
+        _UPD["latest"] = latest if semver(latest) else ""
+        _UPD["notes"]  = str(saved.get("notes") or "")[:CHANGELOG_MAX]
+        _UPD["error"]  = str(saved.get("error") or "")[:200]
+
+def _upd_save():
+    tmp = UPDATE_STATE + ".new"
+    try:
+        with _UPD_LOCK:
+            payload = dict(_UPD)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, UPDATE_STATE)
+    except OSError:
+        # A read-only or missing data directory costs nothing but the cache:
+        # the check still works, it just starts over after a restart.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+def _update_fetch(url, limit):
+    """One GET, one hard timeout, at most 'limit' bytes, decoded as text.
+
+    Deliberately unclever: no session, no cookies, no authentication, no JSON,
+    no HTML. urllib is in the standard library, so this adds no dependency to a
+    panel whose dependency list is three packages long.
+    """
+    req = urllib.request.Request(url, method="GET", headers={
+        # Honest about who is calling. GitHub sees this, and so would anyone
+        # else the operator points M2PANEL_UPDATE_URL at.
+        "User-Agent": "metin2-panel/%s (+%s)" % (PANEL_VERSION or "unknown",
+                                                 "https://github.com/AzzlackSyndicate/"
+                                                 "metin2-singleplayer-serverfiles-linux"),
+        "Accept": "text/plain",
+    })
+    with urllib.request.urlopen(req, timeout=UPDATE_TIMEOUT) as resp:
+        # A redirect away from HTTPS would be a downgrade; refuse it rather
+        # than follow it quietly.
+        if not str(resp.geturl()).startswith("https://"):
+            raise urllib.error.URLError("the answer came from a plain-HTTP address")
+        if getattr(resp, "status", 200) != 200:
+            raise urllib.error.URLError("HTTP %s" % resp.status)
+        return resp.read(limit).decode("utf-8", "replace")
+
+def _update_check_now():
+    """One attempt. Never raises: a failure is a recorded fact, not an event."""
+    now = time.time()
+    try:
+        raw = _update_fetch(UPDATE_BASE_URL + "/VERSION", 64)
+        first = (raw.strip().splitlines() or [""])[0].strip()
+        if not semver(first):
+            raise ValueError("the published VERSION is not a version")
+        notes = ""
+        if semver_newer(first, PANEL_VERSION):
+            # Only now is the changelog worth the bytes -- and only then does
+            # anything get shown, so there is nothing to fetch otherwise.
+            try:
+                notes = _update_fetch(UPDATE_BASE_URL + "/CHANGELOG.md", CHANGELOG_MAX)
+            except Exception:
+                notes = ""      # the version alone is still worth having
+        with _UPD_LOCK:
+            _UPD.update(checked=now, tried=now, latest=first, notes=notes, error="")
+    except Exception as exc:
+        with _UPD_LOCK:
+            # Keep whatever was known before; only the attempt failed.
+            _UPD.update(tried=now, error=str(exc)[:200] or exc.__class__.__name__)
+    _upd_save()
+
+def _update_worker():
+    """The whole of the panel's outbound traffic, in one background thread.
+
+    Off the request path entirely: no page render ever waits for the network,
+    so a machine with no route to the internet renders exactly as fast as one
+    with a good one. The thread is a daemon, so it never delays a shutdown.
+    """
+    # A little jitter, and never during startup: the first page load should not
+    # compete with a DNS lookup, and a few hundred servers that were all
+    # restarted by the same power cut should not arrive at GitHub together.
+    time.sleep(30 + random.random() * 120)
+    while True:
+        try:
+            with _UPD_LOCK:
+                tried, ok_at, failed = _UPD["tried"], _UPD["checked"], bool(_UPD["error"])
+            due = (tried + UPDATE_RETRY) if failed or not ok_at else (ok_at + UPDATE_EVERY)
+            if time.time() >= due:
+                _update_check_now()
+        except Exception:
+            pass            # a bug in here must not take the thread down
+        time.sleep(300)
+
+def update_state():
+    """What the templates ask. Reads memory only -- never the network."""
+    with _UPD_LOCK:
+        latest, checked, error = _UPD["latest"], _UPD["checked"], _UPD["error"]
+    return {"enabled":   UPDATE_CHECK,
+            "current":   PANEL_VERSION,
+            "latest":    latest,
+            "available": semver_newer(latest, PANEL_VERSION),
+            "checked":   checked,
+            "error":     error}
+
+def update_notes():
+    """The published changelog, when there is a newer version. Text, not HTML."""
+    with _UPD_LOCK:
+        return _UPD["notes"] if semver_newer(_UPD["latest"], PANEL_VERSION) else ""
+
+_upd_load()
+if UPDATE_CHECK:
+    threading.Thread(target=_update_worker, name="update-check", daemon=True).start()
+
+# ---- Markdown, the six kinds of it this project's changelog uses -------------
+#  The panel depends on flask, PyMySQL and waitress. A Markdown library for
+#  headings, bullets, bold and links would be a fourth dependency, with its own
+#  release schedule and its own history of HTML-injection bugs, on the one page
+#  that renders text fetched over the network. So this renders it here.
+#
+#  The security property is the ordering, and it is the whole design: every
+#  line is HTML-escaped FIRST, and the formatting is then applied to text that
+#  can no longer contain a tag, an attribute or a quote. A changelog that
+#  contains <script> shows the characters <script>; a link whose target is
+#  javascript: or contains a quote is printed as its own words instead of
+#  becoming a link. There is no path by which the fetched file can add markup,
+#  because by the time anything is added the markup characters are gone.
+_MD_LINK = re.compile(r"\[([^\]\[]{1,200})\]\(([^()\s]{1,500})\)")
+_MD_BOLD = re.compile(r"\*\*([^*]{1,300})\*\*")
+_MD_ITAL = re.compile(r"(?<![*\w])\*([^*\n]{1,300})\*(?![*\w])")
+_MD_HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BULL = re.compile(r"^(\s*)[-*+]\s+(.*)$")
+_MD_NUMB = re.compile(r"^(\s*)\d{1,3}[.)]\s+(.*)$")
+_MD_RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
+
+def _md_url_ok(url):
+    """Is this escaped URL safe to put inside href="..."?
+
+    It is checked AFTER escaping, so a quote can only be here as an entity and
+    could not close the attribute anyway. Both are required: an http(s) scheme
+    -- which rules out javascript:, data: and vbscript: -- and no character
+    that would end the attribute even if escaping had somehow been skipped.
+    """
+    if not (url.startswith("https://") or url.startswith("http://")):
+        return False
+    if len(url) > 500:
+        return False
+    if any(bad in url for bad in ('"', "'", "<", ">", "&quot;", "&#34;", "&#39;", "&lt;", "&gt;")):
+        return False
+    return not re.search(r"\s", url)
+
+def _md_inline(chunk):
+    """Links, bold and italics inside one already-escaped run of text."""
+    def link(m):
+        text, url = m.group(1), m.group(2)
+        if _md_url_ok(url):
+            return '<a href="%s" rel="noopener noreferrer nofollow" target="_blank">%s</a>' % (url, text)
+        # A link to a file in the repository (UPDATING.md) rather than to a
+        # site: the words are the useful part, and inventing an address for
+        # them would send the reader somewhere this panel cannot vouch for.
+        return text
+    out = _MD_LINK.sub(link, chunk)
+    out = _MD_BOLD.sub(r"<strong>\1</strong>", out)
+    out = _MD_ITAL.sub(r"<em>\1</em>", out)
+    return out
+
+def _md_text(raw_line):
+    """One line of Markdown -> one line of safe HTML."""
+    parts = str(escape(raw_line)).split("`")
+    if len(parts) % 2 == 0:          # an odd number of backticks: the last is stray
+        parts = parts[:-2] + ["`".join(parts[-2:])]
+    return "".join("<code>%s</code>" % p if i % 2 else _md_inline(p)
+                   for i, p in enumerate(parts))
+
+def md_to_html(text):
+    """Render the subset of Markdown this project's changelog is written in.
+
+    Headings, horizontal rules, bullet and numbered lists (one level of
+    nesting), fenced code blocks, paragraphs, and inline code / bold / italic /
+    links. Anything else arrives as its own text, which for a changelog is a
+    perfectly good outcome.
+    """
+    text = str(text or "")[:CHANGELOG_MAX].replace("\r\n", "\n").replace("\r", "\n")
+    out, para, lists, fence = [], [], [], None
+
+    def close_para():
+        if para:
+            out.append("<p>%s</p>" % " ".join(para))
+            del para[:]
+
+    def close_lists(depth=0):
+        while len(lists) > depth:
+            out.append("</%s>" % lists.pop())
+
+    for line in text.split("\n"):
+        if fence is not None:
+            if line.strip().startswith("```"):
+                out.append("<pre><code>%s</code></pre>" % escape("\n".join(fence)))
+                fence = None
+            else:
+                fence.append(line)
+            continue
+        if line.strip().startswith("```"):
+            close_para(); close_lists(); fence = []
+            continue
+        if not line.strip():
+            close_para(); close_lists()
+            continue
+        if _MD_RULE.match(line):
+            close_para(); close_lists()
+            out.append("<hr>")
+            continue
+        m = _MD_HEAD.match(line)
+        if m:
+            close_para(); close_lists()
+            level = min(len(m.group(1)) + 1, 5)      # '#' becomes <h2>: <h1> is the page
+            out.append("<h%d>%s</h%d>" % (level, _md_text(m.group(2).rstrip("# ")), level))
+            continue
+        m = _MD_BULL.match(line) or _MD_NUMB.match(line)
+        if m:
+            close_para()
+            kind = "ul" if _MD_BULL.match(line) else "ol"
+            depth = 1 if len(m.group(1)) >= 2 else 0     # one level of nesting, no more
+            close_lists(depth + 1)
+            while len(lists) <= depth:
+                lists.append(kind)
+                out.append("<%s>" % kind)
+            out.append("<li>%s</li>" % _md_text(m.group(2)))
+            continue
+        if lists:
+            # An indented continuation of the bullet above it.
+            out.append(" " + _md_text(line.strip()))
+            continue
+        para.append(_md_text(line.strip()))
+
+    if fence is not None:                            # unterminated fence
+        out.append("<pre><code>%s</code></pre>" % escape("\n".join(fence)))
+    close_para(); close_lists()
+    # Markup(): every fragment above is either a literal tag written here or a
+    # value that went through escape() first. Nothing else reaches this point.
+    return Markup("\n".join(out))
+
+# =============================================================================
+#  The update request -- what the panel may do, which is very little.
+#
+#  The panel cannot update this server, and it is important that it cannot.
+#  It runs as an unprivileged user in a container, it is the one process here
+#  that faces the internet, it takes registrations and serves files, and
+#  updating means rebuilding images and recreating containers -- which needs
+#  the Docker socket, which is root on the host. A panel with that socket is a
+#  panel whose next bug is a host takeover.
+#
+#  So this is the rates pattern again (see apply_rates.sh and m2-rates): the
+#  panel writes a request into a directory shared with a small watcher, and the
+#  watcher does the work. The request carries an id and the version the panel
+#  believed was published, and the watcher takes ORDERS from neither -- it uses
+#  the id to avoid doing the same thing twice, logs the version, and then runs
+#  one fixed sequence that is written down in its own source. There is no field
+#  in this file that can tell it what to run, where to fetch from, or what to
+#  remove.
+#
+#  Off unless the operator switches it on, in two independent places: this flag
+#  (M2_UPDATE_APPLY), and the compose profile that starts the watcher at all.
+#  With either one absent, nothing here has an effect and no button is shown.
+# =============================================================================
+UPDATE_APPLY   = bool(CONF.get("update_apply", False))
+UPDATE_SPOOL   = _env_path("M2PANEL_UPDATE_SPOOL", "/opt/m2update")
+UPDATE_REQUEST = os.path.join(UPDATE_SPOOL, "request")
+UPDATE_STATUS  = os.path.join(UPDATE_SPOOL, "update.status")
+UPDATE_LOGFILE = os.path.join(UPDATE_SPOOL, "update.log")
+UPDATE_BEAT    = os.path.join(UPDATE_SPOOL, "watcher")
+UPDATE_LOG_TAIL = 16_384        # bytes of the watcher's log shown on the page
+
+def updater_ready():
+    """Is the watcher actually running on the other side of the spool?
+
+    It touches a file every few seconds. Without that, the button would be
+    offered, the request would be written, and nothing would ever happen --
+    which looks exactly like a hung update.
+    """
+    try:
+        return (time.time() - os.stat(UPDATE_BEAT).st_mtime) < 120
+    except OSError:
+        return False
+
+def update_status():
+    """The 'key=value' note the watcher leaves behind. Empty when there is none."""
+    out = {}
+    try:
+        with open(UPDATE_STATUS, encoding="utf-8", errors="replace") as f:
+            for line in f.read(8192).splitlines():
+                k, sep, v = line.partition("=")
+                if sep:
+                    out[k.strip()] = v.strip()[:400]
+    except OSError:
+        pass
+    return out
+
+def update_log_tail():
+    """The last few KB of what the watcher has printed. Text, never HTML."""
+    try:
+        size = os.path.getsize(UPDATE_LOGFILE)
+        with open(UPDATE_LOGFILE, encoding="utf-8", errors="replace") as f:
+            if size > UPDATE_LOG_TAIL:
+                f.seek(size - UPDATE_LOG_TAIL)
+                f.readline()                 # drop the half line seek landed in
+            return f.read(UPDATE_LOG_TAIL)
+    except OSError:
+        return ""
+
+def update_write_status(state):
+    """Say 'it is queued' straight away, so the page that opens next is honest."""
+    old = os.umask(0o007)
+    try:
+        with open(UPDATE_STATUS, "w", encoding="utf-8") as f:
+            f.write("state=%s\ntime=%d\n" % (state, int(time.time())))
+    except OSError:
+        pass
+    finally:
+        os.umask(old)
+
+def update_can_apply():
+    """All three conditions, in one place: switched on, watcher up, and behind."""
+    return bool(UPDATE_APPLY and updater_ready() and update_state()["available"])
+
+def update_request_write(version):
+    """Leave the request in the spool. Returns True when it is safely in place.
+
+    Everything long -- fetching, building, restarting -- happens on the other
+    side. This writes about 60 bytes and returns, so the browser gets its
+    answer immediately and the progress page takes over from there.
+    """
+    try:
+        os.makedirs(UPDATE_SPOOL, exist_ok=True)
+    except OSError:
+        return False
+    tmp = UPDATE_REQUEST + ".new"
+    old = os.umask(0o007)         # the watcher runs as another user, same group
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("id=%d-%d\nversion=%s\ntime=%d\n"
+                    % (int(time.time()), os.getpid(),
+                       version if semver(version) else "", int(time.time())))
+        os.replace(tmp, UPDATE_REQUEST)
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+    finally:
+        os.umask(old)
 
 # item database (built from item_proto): [{v:vnum, n:name, k:search keywords, c:category}, ...]
 try:
@@ -864,6 +1355,95 @@ T = {
  "tip_delcode":  {"en":"Seven digits the game asks for when you delete a character. Pick something you will remember.",
                   "de":"Sieben Ziffern, nach denen das Spiel fragt, wenn du einen Charakter löschst. Wähle etwas, das du dir merkst.",
                   "tr":"Bir karakteri silerken oyunun soracağı yedi rakam. Hatırlayacağın bir şey seç."},
+ # --- version, patch log, updates -------------------------------------------
+ "ver_label":    {"en":"Version","de":"Version","tr":"Sürüm"},
+ "ver_unknown":  {"en":"unknown","de":"unbekannt","tr":"bilinmiyor"},
+ "ver_unknown_why":{"en":"This build does not carry a version file, so the panel cannot say which one it is — and will not guess. Update checks stay off until it can.",
+                  "de":"Dieser Build enthält keine Versionsdatei, also kann das Panel nicht sagen, welche Version es ist — und rät nicht. Solange bleibt die Update-Prüfung ohne Wirkung.",
+                  "tr":"Bu yapıda sürüm dosyası yok, bu yüzden panel hangi sürüm olduğunu söyleyemez — ve tahmin etmez. O zamana kadar güncelleme kontrolü sonuç vermez."},
+ "pl_nav":       {"en":"Patch log","de":"Änderungsprotokoll","tr":"Sürüm notları"},
+ "pl_open":      {"en":"📜 Open the patch log","de":"📜 Änderungsprotokoll öffnen","tr":"📜 Sürüm notlarını aç"},
+ "pl_dash_hint": {"en":"What changed in this build, and what a newer one would change.",
+                  "de":"Was sich in diesem Build geändert hat — und was ein neuerer ändern würde.",
+                  "tr":"Bu yapıda neler değişti ve daha yenisi neleri değiştirir."},
+ "tip_patchlog": {"en":"The project's changelog: the version you are running, and — when there is one — the version that has been published since.",
+                  "de":"Das Änderungsprotokoll des Projekts: die Version, die du fährst, und — falls vorhanden — die inzwischen veröffentlichte.",
+                  "tr":"Projenin değişiklik günlüğü: çalıştırdığın sürüm ve — varsa — o zamandan beri yayımlanan sürüm."},
+ "pl_local_t":   {"en":"What you are running","de":"Was bei dir läuft","tr":"Çalıştırdığın sürüm"},
+ "pl_remote_t":  {"en":"What an update would bring","de":"Was ein Update bringen würde","tr":"Güncelleme ne getirir"},
+ "pl_remote_hint":{"en":"Fetched from the project's repository as plain text and shown as text. Nothing in it is run, and nothing in it can add anything to this page.",
+                  "de":"Als reiner Text aus dem Projekt-Repository geholt und als Text angezeigt. Nichts daraus wird ausgeführt, und nichts daraus kann dieser Seite etwas hinzufügen.",
+                  "tr":"Projenin deposundan düz metin olarak alınır ve metin olarak gösterilir. İçindeki hiçbir şey çalıştırılmaz ve bu sayfaya hiçbir şey ekleyemez."},
+ "pl_none":      {"en":"The changelog is not part of this build, so there is nothing to show here.",
+                  "de":"Das Änderungsprotokoll ist in diesem Build nicht enthalten, hier gibt es also nichts zu zeigen.",
+                  "tr":"Değişiklik günlüğü bu yapıda yok, bu yüzden burada gösterilecek bir şey yok."},
+ "upd_avail_t":  {"en":"A newer version has been published","de":"Es wurde eine neuere Version veröffentlicht","tr":"Daha yeni bir sürüm yayımlandı"},
+ "upd_avail":    {"en":"You are running {cur}. {new} is available.",
+                  "de":"Bei dir läuft {cur}. Verfügbar ist {new}.",
+                  "tr":"Sende {cur} çalışıyor. {new} mevcut."},
+ "upd_avail_short":{"en":"update available","de":"Update verfügbar","tr":"güncelleme var"},
+ "upd_see":      {"en":"See what it brings","de":"Ansehen, was es bringt","tr":"Neler getirdiğine bak"},
+ "upd_none":     {"en":"This is the newest published version.","de":"Das ist die neueste veröffentlichte Version.","tr":"Bu, yayımlanan en yeni sürüm."},
+ "upd_never":    {"en":"Not checked yet — the first check happens a couple of minutes after the panel starts.",
+                  "de":"Noch nicht geprüft — die erste Prüfung läuft ein paar Minuten nach dem Start des Panels.",
+                  "tr":"Henüz kontrol edilmedi — ilk kontrol panel başladıktan birkaç dakika sonra yapılır."},
+ "upd_failed":   {"en":"Could not check — no answer from the internet. Nothing is wrong with your server; it will try again later.",
+                  "de":"Prüfung nicht möglich — keine Antwort aus dem Internet. Mit deinem Server ist alles in Ordnung; es wird später erneut versucht.",
+                  "tr":"Kontrol edilemedi — internetten yanıt yok. Sunucunda bir sorun yok; daha sonra tekrar denenecek."},
+ "upd_checked":  {"en":"Last checked","de":"Zuletzt geprüft","tr":"Son kontrol"},
+ "upd_off_t":    {"en":"The update check is switched off","de":"Die Update-Prüfung ist ausgeschaltet","tr":"Güncelleme kontrolü kapalı"},
+ "upd_off":      {"en":"This panel is not contacting anything at all. You will not be told when a newer version appears; look at the project page when you want to know. To switch it back on, set M2_UPDATE_CHECK=1 in .env and restart the panel.",
+                  "de":"Dieses Panel kontaktiert überhaupt nichts. Du wirst nicht erfahren, wenn eine neuere Version erscheint; schau auf der Projektseite nach, wenn du es wissen willst. Zum Einschalten: M2_UPDATE_CHECK=1 in der .env setzen und das Panel neu starten.",
+                  "tr":"Bu panel hiçbir yere bağlanmıyor. Yeni bir sürüm çıktığında haber verilmez; öğrenmek istediğinde proje sayfasına bak. Açmak için .env dosyasında M2_UPDATE_CHECK=1 yap ve paneli yeniden başlat."},
+ "upd_phone_t":  {"en":"This page reaches the internet","de":"Diese Seite geht ins Internet","tr":"Bu sayfa internete çıkıyor"},
+ "upd_phone":    {"en":"Once a day, in the background, the panel fetches two text files from the project's repository on GitHub: the published version number, and — only when it is newer than yours — the changelog. That is the only thing in this whole project that contacts anything by itself, and it means GitHub sees your server's address and the time of the request, roughly once a day, the same as any visit to a web page would. Nothing about your server, your players or your database is sent, nothing that comes back is executed, and no page ever waits for it.",
+                  "de":"Einmal am Tag holt das Panel im Hintergrund zwei Textdateien aus dem Projekt-Repository auf GitHub: die veröffentlichte Versionsnummer und — nur wenn sie neuer ist als deine — das Änderungsprotokoll. Das ist das Einzige in diesem ganzen Projekt, das von sich aus irgendwo Kontakt aufnimmt, und es bedeutet: GitHub sieht die Adresse deines Servers und den Zeitpunkt der Anfrage, ungefähr einmal täglich, genau wie bei jedem Aufruf einer Webseite. Nichts über deinen Server, deine Spieler oder deine Datenbank wird übertragen, nichts davon wird ausgeführt, und keine Seite wartet darauf.",
+                  "tr":"Panel günde bir kez, arka planda, GitHub'daki proje deposundan iki metin dosyası alır: yayımlanan sürüm numarası ve — yalnızca seninkinden yeniyse — değişiklik günlüğü. Bu, tüm projede kendi başına bir yere bağlanan tek şeydir ve şu anlama gelir: GitHub, günde yaklaşık bir kez, sunucunun adresini ve isteğin zamanını görür — herhangi bir web sayfasını açmakla aynı. Sunucun, oyuncuların veya veritabanın hakkında hiçbir şey gönderilmez, gelen hiçbir şey çalıştırılmaz ve hiçbir sayfa bunu beklemez."},
+ "upd_phone_off":{"en":"To stop it: set M2_UPDATE_CHECK=0 in .env and restart the panel. Everything else keeps working exactly as it does now.",
+                  "de":"So schaltest du es ab: M2_UPDATE_CHECK=0 in der .env setzen und das Panel neu starten. Alles andere funktioniert genau wie bisher.",
+                  "tr":"Kapatmak için: .env dosyasında M2_UPDATE_CHECK=0 yap ve paneli yeniden başlat. Diğer her şey aynen çalışmaya devam eder."},
+ # --- installing an update from the panel ------------------------------------
+ "upd_nav":      {"en":"Update this server","de":"Diesen Server aktualisieren","tr":"Bu sunucuyu güncelle"},
+ "upd_page_t":   {"en":"Install the update","de":"Update installieren","tr":"Güncellemeyi kur"},
+ "upd_open":     {"en":"⬆️ Install it from here","de":"⬆️ Von hier installieren","tr":"⬆️ Buradan kur"},
+ "upd_warn_t":   {"en":"Before you start","de":"Bevor du startst","tr":"Başlamadan önce"},
+ "upd_warn":     {"en":"The game is rebuilt and restarted, so everyone playing is disconnected and cannot log back in until it is up again. Usually two or three minutes; longer when the game itself has to be recompiled. Accounts, characters, items and guilds are not touched — they live in the database, and nothing in an update goes near it.",
+                  "de":"Das Spiel wird neu gebaut und neu gestartet, alle Spielenden fliegen dabei raus und kommen erst wieder rein, wenn es läuft. Meist zwei bis drei Minuten; länger, wenn das Spiel selbst neu übersetzt werden muss. Konten, Charaktere, Gegenstände und Gilden bleiben unangetastet — sie liegen in der Datenbank, und kein Update fasst sie an.",
+                  "tr":"Oyun yeniden derlenip yeniden başlatılır; oynayan herkesin bağlantısı kesilir ve sunucu geri gelene kadar giriş yapamazlar. Genellikle iki üç dakika; oyunun kendisi yeniden derlenmesi gerekiyorsa daha uzun. Hesaplar, karakterler, eşyalar ve loncalar etkilenmez — onlar veritabanında durur ve hiçbir güncelleme oraya dokunmaz."},
+ "upd_warn_panel":{"en":"The panel restarts too, so this page will lose contact for a minute near the end. Leave it open — it picks up again by itself and shows how it finished.",
+                  "de":"Auch das Panel startet neu, diese Seite verliert also gegen Ende kurz den Kontakt. Lass sie offen — sie meldet sich von selbst zurück und zeigt, wie es ausgegangen ist.",
+                  "tr":"Panel de yeniden başlar, bu yüzden bu sayfa sona doğru bir dakikalığına bağlantıyı kaybeder. Açık bırak — kendiliğinden geri döner ve nasıl bittiğini gösterir."},
+ "upd_start":    {"en":"Start the update","de":"Update starten","tr":"Güncellemeyi başlat"},
+ "upd_started":  {"en":"The update has been requested. It starts within a few seconds.",
+                  "de":"Das Update wurde angefordert. Es startet in wenigen Sekunden.",
+                  "tr":"Güncelleme istendi. Birkaç saniye içinde başlar."},
+ "upd_apply_off_t":{"en":"Updating from the panel is switched off","de":"Updates aus dem Panel sind ausgeschaltet","tr":"Panelden güncelleme kapalı"},
+ "upd_apply_off":{"en":"That is the default, and on a server other people can reach it is the right setting: an update means running commands on the host, and this panel is the part of your server that strangers can talk to. Update by hand instead — one command, in UPDATING.md. If you do want the button, UPDATING.md says how, and says plainly what you are accepting.",
+                  "de":"Das ist die Voreinstellung, und auf einem Server, den andere erreichen können, ist es die richtige: Ein Update bedeutet, Befehle auf dem Host auszuführen, und dieses Panel ist der Teil deines Servers, mit dem Fremde sprechen können. Aktualisiere stattdessen von Hand — ein Befehl, steht in UPDATING.md. Wenn du den Knopf trotzdem willst, steht dort, wie es geht und was du dir damit einhandelst.",
+                  "tr":"Varsayılan budur ve başkalarının erişebildiği bir sunucuda doğru olan da budur: güncelleme, ana makinede komut çalıştırmak demektir ve bu panel, sunucunun yabancıların konuşabildiği parçasıdır. Bunun yerine elle güncelle — tek komut, UPDATING.md içinde. Yine de düğmeyi istiyorsan, orada nasıl açılacağı ve karşılığında neyi kabul ettiğin açıkça yazıyor."},
+ "upd_no_watcher_t":{"en":"The updater is not running","de":"Der Updater läuft nicht","tr":"Güncelleyici çalışmıyor"},
+ "upd_no_watcher":{"en":"Updating from the panel is switched on, but the small helper that carries it out is not there — so the button would do nothing. Start it on the server with:",
+                  "de":"Updates aus dem Panel sind eingeschaltet, aber das kleine Hilfsprogramm, das sie ausführt, läuft nicht — der Knopf würde also nichts tun. Starte es auf dem Server mit:",
+                  "tr":"Panelden güncelleme açık, ama işi yapan küçük yardımcı çalışmıyor — yani düğme hiçbir şey yapmazdı. Sunucuda şununla başlat:"},
+ "upd_manual_t": {"en":"Updating by hand","de":"Von Hand aktualisieren","tr":"Elle güncelleme"},
+ "upd_manual":   {"en":"On the server, in the directory the stack was installed in:",
+                  "de":"Auf dem Server, im Verzeichnis, in dem der Stack installiert wurde:",
+                  "tr":"Sunucuda, yığının kurulduğu dizinde:"},
+ "upd_progress": {"en":"Progress","de":"Fortschritt","tr":"İlerleme"},
+ "upd_waiting":  {"en":"Waiting for the updater to pick this up…","de":"Warte darauf, dass der Updater das aufnimmt…","tr":"Güncelleyicinin bunu almasını bekliyorum…"},
+ "upd_lost":     {"en":"No contact with the panel — it is probably restarting. This page keeps trying.",
+                  "de":"Kein Kontakt zum Panel — es startet vermutlich gerade neu. Diese Seite versucht es weiter.",
+                  "tr":"Panelle bağlantı yok — muhtemelen yeniden başlıyor. Bu sayfa denemeye devam ediyor."},
+ "upd_st_queued":{"en":"Requested — the updater has not started yet.","de":"Angefordert — der Updater hat noch nicht begonnen.","tr":"İstendi — güncelleyici henüz başlamadı."},
+ "upd_st_running":{"en":"Running. Do not close the server down while this is happening.","de":"Läuft. Fahre den Server währenddessen nicht herunter.","tr":"Çalışıyor. Bu sırada sunucuyu kapatma."},
+ "upd_st_ok":    {"en":"Done. The server is running the new version.","de":"Fertig. Der Server läuft auf der neuen Version.","tr":"Bitti. Sunucu yeni sürümle çalışıyor."},
+ "upd_st_failed":{"en":"It did not finish. Your server was left running the version it had — nothing was removed and no data was touched. The log below says where it stopped.",
+                  "de":"Es wurde nicht fertig. Dein Server läuft weiter auf der bisherigen Version — nichts wurde entfernt und keine Daten angefasst. Das Protokoll unten sagt, wo es stehen geblieben ist.",
+                  "tr":"Tamamlanmadı. Sunucun eski sürümüyle çalışmaya devam ediyor — hiçbir şey silinmedi, hiçbir veriye dokunulmadı. Aşağıdaki günlük nerede durduğunu söylüyor."},
+ "upd_req_failed":{"en":"The request could not be written — the shared updater directory is not mounted in this container.",
+                  "de":"Die Anfrage konnte nicht geschrieben werden — das gemeinsame Updater-Verzeichnis ist in diesem Container nicht eingebunden.",
+                  "tr":"İstek yazılamadı — paylaşılan güncelleyici dizini bu kapsayıcıda bağlı değil."},
+ "upd_not_now":  {"en":"There is nothing to install right now.","de":"Im Moment gibt es nichts zu installieren.","tr":"Şu anda kurulacak bir şey yok."},
 }
 CATS = ["all","weapon","armor","usable","ds","metin","special","other"]
 
@@ -968,6 +1548,15 @@ def inject_i18n():
             "dlsha": _cf["sha256"],
             "local_only": bool(CONF.get("local_only", False)),
             "has_accounts": accounts_exist(),
+            # The version, and whether a newer one is known. Both are read out
+            # of memory -- update_state() never touches the network, so this
+            # costs a public page render nothing at all. The notice itself is
+            # shown only to the operator: a player has no use for it, and
+            # announcing the exact build to everyone who visits is free
+            # reconnaissance for anybody looking for a known weakness.
+            "panel_version": PANEL_VERSION,
+            "upd": update_state(),
+            "is_admin": bool(session.get("auth") or CONF.get("local_only", False)),
             # Empty unless the operator set one. It used to be a hard-coded
             # address, which meant every server built from this project pointed
             # its players at one particular person's inbox.
@@ -1289,6 +1878,28 @@ input[title]{cursor:text}
 .help{border-bottom:1px dotted #6b6350}
 .about p{margin:0 0 10px;line-height:1.6;font-size:14px;color:#cdc5b0}
 .about p:last-child{margin-bottom:0}
+/* ---- the rendered changelog --------------------------------------------
+   Everything under .md was produced by md_to_html(): a fixed set of tags,
+   built here, out of text that was HTML-escaped before a single one of them
+   was added. It is styled as a document rather than as part of the panel,
+   because that is what it is. */
+.md{font-size:14px;line-height:1.65;color:#cdc5b0}
+.md h2{font-size:17px;margin:20px 0 8px;color:var(--gold2)}
+.md h2:first-child{margin-top:0}
+.md h3{font-size:15px;margin:16px 0 6px;color:var(--txt)}
+.md h4,.md h5{font-size:13px;margin:14px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.md p{margin:0 0 10px}
+.md ul,.md ol{margin:0 0 10px;padding-left:22px}
+.md li{margin:5px 0}
+.md hr{border:none;border-top:1px solid var(--line);margin:18px 0}
+.md code,.cmd{background:#131007;border:1px solid var(--line);border-radius:6px;padding:1px 5px;
+font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:13px}
+.md pre,pre.cmd{background:#131007;border:1px solid var(--line);border-radius:10px;padding:12px;
+overflow-x:auto;white-space:pre;margin:8px 0}
+.md pre code,pre.cmd{border:none;background:none;padding:0}
+pre.cmd{padding:12px;border:1px solid var(--line);background:#131007;color:#cdc5b0;line-height:1.5}
+.md strong{color:var(--txt)}
+.md a{text-decoration:underline}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style></head><body>
 {# The title is the way home, as it is on every other site. Worth having even
@@ -1307,7 +1918,19 @@ input[title]{cursor:text}
 {% with m = get_flashed_messages(with_categories=true) %}{% for c,msg in m %}
 <div class="flash {{'err' if c=='error' else ''}}">{{msg}}</div>{% endfor %}{% endwith %}
 __BODY__
-</div></body></html>"""
+</div>
+{# Which build this is -- small, at the bottom, and only for the operator.
+   Findable: it is on every admin page and it is the way into the patch log.
+   Unobtrusive: it is one grey line. Not public: a player has no use for the
+   number and an attacker has a very specific one. #}
+{% if is_admin %}
+<div class="wrap" style="padding-top:0;text-align:center">
+<span class="muted" style="font-size:12px">
+<a href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}" style="color:inherit">{{t('ver_label')}} {{ panel_version if panel_version else t('ver_unknown') }}</a>
+{% if upd.available %} · <a href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">⬆️ {{t('upd_avail_short')}}</a>{% endif %}
+</span></div>
+{% endif %}
+</body></html>"""
 
 TPL_LOGIN = BASE.replace("__BODY__", """
 <div style="max-width:560px;margin:18px auto 0;text-align:center">
@@ -1556,6 +2179,15 @@ TPL_DASH = BASE.replace("__BODY__", """
  show.addEventListener('click',function(e){ e.preventDefault(); try{localStorage.removeItem(KEY);}catch(e){} apply(false); });
 })();
 </script>
+{# Only when there really is something newer, and only here -- the front page
+   belongs to the players and none of this is their business. #}
+{% if upd.available %}
+<div class="card onboard">
+<h3>⬆️ {{t('upd_avail_t')}}</h3>
+<p class="muted">{{ t('upd_avail').replace('{cur}', upd.current or t('ver_unknown')).replace('{new}', upd.latest) }}</p>
+<a class="btn" href="{{url_for('patchlog')}}" title="{{t('tip_patchlog')}}">{{t('upd_see')}}</a>
+</div>
+{% endif %}
 <div class="card">
 <h3 class="help" title="{{t('tip_rates')}}">{{t('rates_nav')}}</h3>
 <p class="muted">{{t('rates_dash_hint')}}</p>
@@ -1794,6 +2426,227 @@ def rates():
     st = rates_status().get("state", "")
     return render_template_string(TPL_RATES, cur=cur_rates, presets=RATE_PRESETS,
                                   state_msg=t("rates_st_" + st) if st in RATE_STATES else "")
+
+# =============================================================================
+#  The patch log, and the update page.
+# =============================================================================
+
+# The manual update, written out. The same six lines the watcher runs, in the
+# same order, so that the button and the keyboard do exactly the same thing --
+# and so that an operator who does not want the button is not left guessing.
+#
+# This is the fallback for a stack somebody assembled by hand. An installer
+# knows better: it knows the one command that reinstalls this exact server, and
+# it leaves that command here. On Windows that is the whole update story -- the
+# installer is idempotent, so running it again pulls the new version, rebuilds
+# and restarts, and nothing has to run in the background waiting to do it.
+MANUAL_UPDATE = """REPO=/var/cache/m2src/repo
+STACK=/opt/metin2/stack
+
+git -C "$REPO" fetch --depth 1 origin main
+git -C "$REPO" reset --hard FETCH_HEAD
+sh "$REPO/linux-port/fetch-sources.sh" fetch
+(cd "$REPO/linux-port/docker" && tar cf - .) | (cd "$STACK" && tar xf -)
+cd "$STACK" && docker compose up -d --build"""
+
+def manual_update():
+    return str(CONF.get("update_command", "") or "").strip() or MANUAL_UPDATE
+
+TPL_PATCHLOG = BASE.replace("__BODY__", """
+<p><a href="{{url_for('dash')}}">{{t('back_players')}}</a></p>
+
+<div class="card">
+<h3>📜 {{t('pl_nav')}}</h3>
+<p><span class="badge">{{t('ver_label')}} {{ upd.current if upd.current else t('ver_unknown') }}</span>
+{% if upd.available %}<span class="badge" style="border-color:var(--gold)">⬆️ {{upd.latest}}</span>{% endif %}</p>
+{% if not upd.current %}<p class="muted">{{t('ver_unknown_why')}}</p>{% endif %}
+{% if not upd.enabled %}
+<p class="muted"><b>{{t('upd_off_t')}}.</b> {{t('upd_off')}}</p>
+{% elif upd.available %}
+<p class="muted">{{ t('upd_avail').replace('{cur}', upd.current or t('ver_unknown')).replace('{new}', upd.latest) }}</p>
+{% elif not upd.checked %}
+<p class="muted">{% if upd.error %}{{t('upd_failed')}}{% else %}{{t('upd_never')}}{% endif %}</p>
+{% else %}
+<p class="muted">{{t('upd_none')}}{% if upd.error %} — {{t('upd_failed')}}{% endif %}</p>
+{% endif %}
+{% if upd.checked %}<p class="muted" style="font-size:12px">{{t('upd_checked')}}: {{checked_at}}</p>{% endif %}
+</div>
+
+{% if upd.available %}
+<div class="card">
+<h3>⬆️ {{t('upd_page_t')}}</h3>
+{% if can_apply %}
+<p class="muted">{{t('upd_warn')}}</p>
+<a class="btn" href="{{url_for('update_page')}}">{{t('upd_open')}}</a>
+{% elif apply_on %}
+<p class="muted"><b>{{t('upd_no_watcher_t')}}.</b> {{t('upd_no_watcher')}}</p>
+<pre class="cmd">cd /opt/metin2/stack
+docker compose --profile update up -d updater</pre>
+{% else %}
+<p class="muted"><b>{{t('upd_apply_off_t')}}.</b> {{t('upd_apply_off')}}</p>
+<p class="muted">{{t('upd_manual')}}</p>
+<pre class="cmd">{{manual}}</pre>
+{% endif %}
+</div>
+
+<div class="card">
+<h3>{{t('pl_remote_t')}}</h3>
+<p class="muted" style="font-size:12px">{{t('pl_remote_hint')}}</p>
+<div class="md">{{remote}}</div>
+</div>
+{% endif %}
+
+<div class="card">
+<h3>{{t('pl_local_t')}}</h3>
+{% if local %}<div class="md">{{local}}</div>
+{% else %}<p class="muted">{{t('pl_none')}}</p>{% endif %}
+</div>
+
+<div class="card about">
+<h3>🌐 {{t('upd_phone_t')}}</h3>
+<p>{{t('upd_phone')}}</p>
+<p>{% if upd.enabled %}{{t('upd_phone_off')}}{% else %}{{t('upd_off')}}{% endif %}</p>
+</div>""")
+
+TPL_UPDATE = BASE.replace("__BODY__", """
+<p><a href="{{url_for('patchlog')}}">← {{t('pl_nav')}}</a></p>
+
+<div class="card">
+<h3>⬆️ {{t('upd_page_t')}}</h3>
+<p><span class="badge">{{ upd.current if upd.current else t('ver_unknown') }}</span> →
+   <span class="badge" style="border-color:var(--gold)">{{upd.latest}}</span></p>
+</div>
+
+{# While one is in flight the "start it" block is gone entirely -- there is
+   nothing sensible a second press could do, so there is nothing to press. #}
+{% if state not in ('queued', 'running') %}
+<div class="card">
+<h3>⚠️ {{t('upd_warn_t')}}</h3>
+<p class="muted">{{t('upd_warn')}}</p>
+<p class="muted">{{t('upd_warn_panel')}}</p>
+{% if can_apply %}
+<form method="post" action="{{url_for('update_start')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+<button class="big">{{t('upd_start')}}</button></form>
+{% else %}
+<p class="muted">{{t('upd_not_now')}}</p>
+{% endif %}
+</div>
+{% endif %}
+
+{% if state %}
+<div class="card">
+<h3>{{t('upd_progress')}}</h3>
+<p id="ustate" class="muted">{{state_msg or t('upd_waiting')}}</p>
+<pre class="cmd" id="ulog" style="max-height:340px;overflow:auto">{{log}}</pre>
+</div>
+<script>
+(function(){
+ var st=document.getElementById('ustate'), lg=document.getElementById('ulog');
+ var LOST={{ lost_msg|tojson }};
+ function tick(){
+  fetch('{{url_for('api_update')}}',{cache:'no-store'})
+   .then(function(r){return r.json();})
+   .then(function(d){
+     // textContent, never innerHTML: this is a log file written by another
+     // program and it is shown as the characters it contains, nothing more.
+     if(d.message) st.textContent = d.message;
+     if(typeof d.log === 'string' && d.log !== lg.textContent){
+       var atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 24;
+       lg.textContent = d.log;
+       if(atEnd) lg.scrollTop = lg.scrollHeight;
+     }
+     if(d.state === 'ok' || d.state === 'failed'){ window.setTimeout(function(){
+        window.location.reload(); }, 4000); return; }
+     window.setTimeout(tick, 3000);
+   })
+   .catch(function(){
+     // Expected, once: the panel is one of the containers being recreated.
+     st.textContent = LOST;
+     window.setTimeout(tick, 3000);
+   });
+ }
+ window.setTimeout(tick, 1500);
+})();
+</script>
+{% endif %}""")
+
+UPDATE_STATES = ("queued", "running", "ok", "failed")
+
+def _checked_at(ts):
+    if not ts:
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, OSError, OverflowError):
+        return ""
+
+@app.route("/patchlog")
+@login_required
+def patchlog():
+    """What this build changed, and what a newer one would change.
+
+    Both sides are Markdown and both go through the same renderer, which
+    escapes before it formats. The published one arrived over the network; the
+    local one came out of the image. Neither is trusted more than the other,
+    because neither needs to be.
+    """
+    return render_template_string(
+        TPL_PATCHLOG,
+        local=md_to_html(local_changelog()),
+        remote=md_to_html(update_notes()),
+        checked_at=_checked_at(update_state()["checked"]),
+        can_apply=update_can_apply(),
+        apply_on=UPDATE_APPLY,
+        manual=manual_update())
+
+@app.route("/update")
+@login_required
+def update_page():
+    st = update_status()
+    state = st.get("state", "")
+    return render_template_string(
+        TPL_UPDATE,
+        can_apply=update_can_apply(),
+        state=state if state in UPDATE_STATES else "",
+        state_msg=t("upd_st_" + state) if state in UPDATE_STATES else "",
+        log=update_log_tail(),
+        lost_msg=t("upd_lost"))
+
+@app.route("/update/start", methods=["POST"])
+@login_required
+def update_start():
+    """Write the request and get out of the way.
+
+    Everything this can do is in these few lines: it writes a file containing
+    an id, a version number and a timestamp into a directory. It cannot say
+    what should be run, and the watcher on the other side would not read it if
+    it could.
+    """
+    if not update_can_apply():
+        flash(t("upd_not_now"), "error")
+        return redirect(url_for("patchlog"))
+    if not update_request_write(update_state()["latest"]):
+        flash(t("upd_req_failed"), "error")
+        return redirect(url_for("patchlog"))
+    # Say "queued" here rather than waiting for the watcher to say it: the
+    # redirect below lands within milliseconds and the watcher polls every few
+    # seconds, so without this the page would open on the *previous* update's
+    # result for a moment. The watcher overwrites this the instant it starts.
+    update_write_status("queued")
+    flash(t("upd_started"))
+    return redirect(url_for("update_page"))
+
+@app.route("/api/update")
+@login_required
+def api_update():
+    """Progress, for the page above. Admin-only -- nothing here is public."""
+    st = update_status()
+    state = st.get("state", "")
+    state = state if state in UPDATE_STATES else ""
+    return jsonify({"state": state,
+                    "message": t("upd_st_" + state) if state else "",
+                    "log": update_log_tail()})
 
 @app.route("/login", methods=["GET", "POST"])
 def login():

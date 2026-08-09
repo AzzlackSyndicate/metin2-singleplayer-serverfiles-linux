@@ -59,6 +59,14 @@ M2_DB_WAIT_TIMEOUT="${M2_DB_WAIT_TIMEOUT:-180}"
 # the same named volume here.
 RATES_SPOOL="${M2PANEL_RATES_SPOOL:-/opt/m2spool}"
 
+# The same arrangement for updates. Unlike the rates spool this one usually has
+# nobody on the other side: the updater is in a compose profile and most servers
+# never start it. The directory is prepared anyway, because the panel decides
+# whether to offer its update button by looking for the updater's heartbeat in
+# here -- and "the file is not there" has to mean "the updater is not running",
+# not "the panel could not look".
+UPDATE_SPOOL="${M2PANEL_UPDATE_SPOOL:-/opt/m2update}"
+
 # --skip-ssl is required, not optional.  The MariaDB 11.x client that ships in
 # this image enables TLS by default and refuses to connect to a server that
 # does not offer it, with:
@@ -93,6 +101,11 @@ if [ -d "$RATES_SPOOL" ]; then
 else
   log "no rate spool at $RATES_SPOOL -- the rates page will report that the helper"
   log "  cannot reach the game. Mount the rates-spool volume (see docker-compose.yml)."
+fi
+
+if [ -d "$UPDATE_SPOOL" ]; then
+  chgrp m2spool "$UPDATE_SPOOL" 2>/dev/null && chmod 2770 "$UPDATE_SPOOL" 2>/dev/null \
+    || log "WARNING: could not set up $UPDATE_SPOOL for sharing"
 fi
 
 # -----------------------------------------------------------------------------

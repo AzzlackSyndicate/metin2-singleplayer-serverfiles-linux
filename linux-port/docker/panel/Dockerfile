@@ -27,17 +27,43 @@ RUN pip install --no-cache-dir flask PyMySQL waitress
 
 RUN groupadd -r -g 2001 panel && useradd -r -u 2001 -g panel -d /opt/panel -s /usr/sbin/nologin panel
 
-# The rate spool: a volume shared with the game container, which runs as a
-# different user.  The gid must be the same number in both images -- the kernel
-# checks the number, not the name.  (See game/Dockerfile, which creates the
-# same group and puts its own service account in it.)
+# The spool group: shared with the containers on the other side of the panel's
+# two request/response directories -- the game container (rates) and, when the
+# operator has switched it on, the updater (updates).  Both run as a different
+# user, and the gid must be the same number in every image -- the kernel checks
+# the number, not the name.  (See game/Dockerfile, which creates the same group
+# and puts its own service account in it.)
 RUN groupadd -r -g 2050 m2spool && usermod -a -G m2spool panel
 
 WORKDIR /opt/panel
 
-# app/ is staged by ../prepare-context.sh from the panel source directory.
+# app/ is staged by ../prepare-context.sh from the panel source directory. That
+# includes VERSION and CHANGELOG.md, copied there from the repository root --
+# see the "version" block below for why they matter.
 COPY app/ /opt/panel/
 COPY schema/ /opt/panel/schema/
+
+# ---- which build is this? ---------------------------------------------------
+# The panel reports its own version and compares it with the one published in
+# the repository, so it has to know it, and a container cannot look it up: the
+# repository is not in the image and there is no network at build time worth
+# trusting for it. So the number is baked in here, from the file staged into the
+# context, and is fixed for the life of the image -- which is exactly right,
+# because the image IS the version.
+#
+# M2_PANEL_VERSION overrides the file, for building a test image that claims to
+# be some other version:
+#     docker compose build --build-arg M2_PANEL_VERSION=1.0.0 panel
+#
+# If neither is available the file is simply absent and the panel says
+# "unknown". It never guesses, and it never treats unknown as up to date.
+ARG M2_PANEL_VERSION=""
+RUN if [ -n "$M2_PANEL_VERSION" ]; then \
+        printf '%s\n' "$M2_PANEL_VERSION" > /opt/panel/VERSION ; \
+    fi ; \
+    printf 'panel version: %s\n' "$(cat /opt/panel/VERSION 2>/dev/null || echo unknown)"
+LABEL org.opencontainers.image.title="Metin2 admin panel" \
+      org.opencontainers.image.source="https://github.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux"
 COPY bin/entrypoint.sh /usr/local/bin/entrypoint.sh
 # The panel starts this one itself, through M2PANEL_RATES_SCRIPT, whenever
 # somebody saves the rates page.  It lives in /usr/local/bin and NOT on the

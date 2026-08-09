@@ -86,6 +86,9 @@ try {
 #      $env:M2_LOCAL_CONTEXT      = 'C:\path\to\linux-port\docker'
 # -----------------------------------------------------------------------------
 $script:RepoUrl      = if ($env:M2_REPO_URL)          { $env:M2_REPO_URL }          else { 'https://github.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux.git' }
+# Where this script itself lives, so it can tell the panel how to update: on
+# Windows the update IS re-running this, and the panel shows the line to paste.
+$script:SelfUrl      = if ($env:M2_INSTALLER_URL)     { $env:M2_INSTALLER_URL }     else { 'https://raw.githubusercontent.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/main/installer/install.ps1' }
 $script:RepoDir      = if ($env:M2_REPO_DIR)          { $env:M2_REPO_DIR }          else { '' }
 $script:LocalContext = if ($env:M2_LOCAL_CONTEXT)     { $env:M2_LOCAL_CONTEXT }     else { '' }
 $script:SrcArchive   = if ($env:M2_SRC_ARCHIVE)       { $env:M2_SRC_ARCHIVE }       else { '' }
@@ -1296,6 +1299,18 @@ downloaded server files, the client -- is kept either way.
     # cannot work that out on its own -- a public Linux server behind nginx also
     # binds it to 127.0.0.1 -- so we state it here.
     Set-EnvValue $envPath 'M2_LOCAL_ONLY'       '1'
+    # How this machine updates. On Windows that is simply this installer again:
+    # it is idempotent, it pulls the published version, rebuilds and restarts,
+    # and it keeps your database, your passwords and your settings. The panel
+    # shows this line when a newer version appears.
+    #
+    # Deliberately NOT a background watcher. The Linux stack can run one as a
+    # container, but on Windows it would have to be a scheduled task or a
+    # PowerShell process living on the host -- something outside Docker,
+    # quietly running, that nobody asked for. One line to paste when the panel
+    # says there is something to get is a better trade.
+    Set-EnvValue $envPath 'M2_UPDATE_COMMAND' `
+        "irm $($script:SelfUrl) | iex"
     Set-EnvValue $envPath 'M2_AUTH_PORT'        "$($script:AuthPort)"
     Set-EnvValue $envPath 'M2_GAME_PORT_RANGE'  $script:GamePorts
     # The base compose file publishes the panel as "${M2_PANEL_PUBLIC_PORT}:7788",

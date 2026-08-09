@@ -16,6 +16,11 @@
 #      game/src/serverfiles/share/     conf/ data/ locale/ package/
 #      game/src/serverfiles/mark-default/
 #      panel/app/                      admin_panel.py, items.json, favicon.png
+#      panel/app/VERSION               the repository's VERSION -- this is what
+#                                      makes the running panel able to say which
+#                                      build it is and whether it is behind
+#      panel/app/CHANGELOG.md          so the panel's patch log can show what
+#                                      you are running without the internet
 #      panel/schema/                   web_admin_schema.sql
 #      mariadb/initdb.d/dumps/         account/common/player/log/hotbackup.sql
 #      game/rates/pack.sh              the server-files profile (rate maths)
@@ -33,6 +38,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 M2PORT="${M2PORT:-/opt/m2port}"
 PANEL_SRC="${PANEL_SRC:-$HERE/../../files}"
+
+# The repository root: VERSION and CHANGELOG.md live there, and both have to be
+# inside the panel image. A panel that cannot read its own VERSION reports its
+# version as "unknown" -- which is the honest answer, but a useless one, so this
+# is staged rather than left to chance.
+REPO_ROOT="${REPO_ROOT:-$(cd "$HERE/../.." && pwd)}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -143,7 +154,8 @@ chmod +x "$HERE/mariadb/initdb.d/"*.sh 2>/dev/null || true
 # Likewise for the scripts that go into the images. The Dockerfiles chmod them
 # as well; this keeps `bash prepare-context.sh && docker compose up' honest on
 # a working copy with no exec bits at all.
-chmod +x "$HERE/game/bin/"* "$HERE/panel/bin/"* "$HERE/client-builder/bin/"* 2>/dev/null || true
+chmod +x "$HERE/game/bin/"* "$HERE/panel/bin/"* "$HERE/client-builder/bin/"* \
+         "$HERE/updater/bin/"* 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
 say "admin panel"
@@ -153,6 +165,26 @@ cp -a "$PANEL_SRC/admin_panel.py" "$HERE/panel/app/"
 for f in items.json favicon.png; do
   [ -f "$PANEL_SRC/$f" ] && cp -a "$PANEL_SRC/$f" "$HERE/panel/app/" && info "$f"
 done
+# The version, and the changelog that explains it. Both are plain text and both
+# are read by the panel at runtime: VERSION is what it reports and what it
+# compares against the published one, CHANGELOG.md is what its patch log shows
+# for the build you are actually running. Absent, the panel says "unknown" and
+# its patch log says the file is not in this build -- it never invents either.
+if [ -f "$REPO_ROOT/VERSION" ]; then
+  cp -a "$REPO_ROOT/VERSION" "$HERE/panel/app/VERSION"
+  info "VERSION  $(tr -d ' \r\n' < "$REPO_ROOT/VERSION")"
+else
+  info "WARNING: $REPO_ROOT/VERSION not found -- the panel will report its"
+  info "         version as \"unknown\" and cannot tell you when it is behind."
+fi
+if [ -f "$REPO_ROOT/CHANGELOG.md" ]; then
+  cp -a "$REPO_ROOT/CHANGELOG.md" "$HERE/panel/app/CHANGELOG.md"
+  info "CHANGELOG.md  $(du -h "$REPO_ROOT/CHANGELOG.md" | cut -f1)"
+else
+  info "WARNING: $REPO_ROOT/CHANGELOG.md not found -- the panel's patch log will"
+  info "         have nothing to show for the version you are running."
+fi
+
 if [ -f "$PANEL_SRC/web_admin_schema.sql" ]; then
   cp -a "$PANEL_SRC/web_admin_schema.sql" "$HERE/panel/schema/"
   info "web_admin_schema.sql"

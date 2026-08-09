@@ -132,6 +132,65 @@ must apply with zero fuzz and zero rejects, which `fetch-sources.sh` enforces.
   merely needed the player to be online. Check what actually ships before you
   write down what it does.
 
+## Releasing a change
+
+Every change that reaches a user carries a version with it. This is not
+ceremony: the panel checks the published `VERSION`, tells operators they are
+behind, and shows them `CHANGELOG.md` so they can see what they would be
+getting before they take it. A change that skips this is a change nobody is
+told about.
+
+So each release touches three things together, in the same commit:
+
+**1. `VERSION`** — one line, `MAJOR.MINOR.PATCH`.
+
+| Bump | When | Example |
+|---|---|---|
+| PATCH | a fix; nothing an operator does changes | the download returned 500 |
+| MINOR | something new, or something works better than it did | the update checker |
+| MAJOR | the operator has to act — a setting moves, a command goes away, a step is needed during the update | — |
+
+When in doubt between MINOR and MAJOR, ask whether somebody who updates while
+asleep wakes up to a working server. If not, it is MAJOR.
+
+**2. `CHANGELOG.md`** — a new section at the top, dated, grouped under
+`Added` / `Changed` / `Fixed` / `Security` (only the ones you need).
+
+Write each entry for the person running the server, not for the person who
+wrote the patch — what they saw, or would have seen:
+
+> - The client download returned 500 on every request.
+
+not
+
+> - Fixed permissions bug in panel-data volume
+
+One line each. **No reasoning, no design discussion, no explaining why one
+approach was taken over another** — that belongs in the commit message, where
+the people who need it will look. The changelog answers "does this affect me?"
+and nothing else.
+
+If the release needs a manual step, it goes **at the top of the section**, in
+full, before anything else.
+
+**3. The commit message.** Subject line: what changed, in the imperative, under
+~70 characters. Then a blank line, then why — the symptom, the cause, and
+anything the next person would otherwise have to rediscover. The commits worth
+imitating are the ones that answer "why on earth is this like this?" a year
+later.
+
+    Fix client download failing with 500 on every request
+
+    The panel runs as uid 2001 but its data directory was owned by root, so
+    sqlite3 could not create downloads.db and every request to /download
+    raised. The client itself built fine, which made this look like a
+    download problem rather than a permissions one.
+
+    Docker seeds an empty named volume from the image directory it is first
+    mounted on, ownership included, and the client builder is usually first
+    to write into that volume -- so /out in the builder image now belongs to
+    2001:2001 as well.
+
 ## Never commit
 
 - Real IPs, hostnames, passwords, passphrases or SSH keys. Use `203.0.113.10`
