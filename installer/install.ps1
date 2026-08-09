@@ -1475,9 +1475,41 @@ function Start-ClientBuild {
     }
 
     $script:ClientLog = Join-Path $script:InstallDir 'client-build.log'
+    # The archive the source fetch already downloaded is the SAME file the
+    # client builder wants: one package containing both Server/ and Client/.
+    # The two keep separate caches, so without this it fetches its own copy --
+    # another 1.7 GB, another hour, and one more chance for the share to refuse.
+    # The source cache is a Docker volume here rather than a host path, so we
+    # mount it read-only and name the file instead of bind-mounting it.
+    $reuseArgs = @()
+    try {
+        $findCmd = 'find /srccache/cache/archive -maxdepth 1 -type f -size +10M ' +
+                   "! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' " +
+                   "! -name '*.meta' 2>/dev/null | sort | head -1"
+        $probe = Invoke-Native 'docker' @(
+            'run','--rm','-v',"$($script:SrcVolume):/srccache:ro",
+            $script:FetcherImage,'sh','-c',$findCmd)
+        $cached = ($probe.Output -split "`n" |
+                   ForEach-Object { $_.Trim() } |
+                   Where-Object { $_ -like '/srccache/*' } |
+                   Select-Object -First 1)
+        if ($probe.Code -eq 0 -and $cached) {
+            $reuseArgs = @('-v', "$($script:SrcVolume):/srccache:ro",
+                           '-e', "M2_CLIENT_ARCHIVE=$cached")
+        }
+    } catch {
+        # Not being able to look is not a reason to fail -- it just downloads.
+    }
+
     Write-Say 'Starting the client build in the background.'
-    Write-Say 'It downloads over a gigabyte and then repacks it, so it takes a'
-    Write-Say 'while -- often 20 to 60 minutes depending on your connection.'
+    if ($reuseArgs.Count -gt 0) {
+        Write-Say 'It reuses the archive already downloaded for the server, so this'
+        Write-Say 'is a repack rather than another download -- but repacking a'
+        Write-Say 'gigabyte still takes a while, and longer on a slow disk.'
+    } else {
+        Write-Say 'It downloads over a gigabyte and then repacks it, so it takes a'
+        Write-Say 'while -- often 20 to 60 minutes depending on your connection.'
+    }
     Write-Say ''
     Write-Say 'You do not have to wait. The server is usable now; the download'
     Write-Say 'link simply starts working when this finishes.'
@@ -1491,7 +1523,7 @@ function Start-ClientBuild {
         # -T: no pseudo-terminal. Its output goes to a log file, not a console.
         # -PassThru so we get the process back and can watch it below.
         $proc = Start-Process -FilePath 'docker' `
-            -ArgumentList @('compose','run','--rm','-T','client-builder') `
+            -ArgumentList (@('compose','run','--rm','-T') + $reuseArgs + @('client-builder')) `
             -WorkingDirectory $script:InstallDir `
             -RedirectStandardOutput $script:ClientLog `
             -RedirectStandardError  $errFile `

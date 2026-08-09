@@ -1762,9 +1762,30 @@ start_client_build() {
     fi
 
     CLIENT_LOG="$INSTALL_DIR/client-build.log"
+
+    # The archive fetch_sources already downloaded is the SAME file the client
+    # builder wants: one package containing both Server/ and Client/. Without
+    # this it would fetch its own copy, because the two keep separate caches --
+    # 1.7 GB and an hour thrown away, and one more chance for the share to
+    # refuse. Mounting the cached file straight into the builder's drop folder
+    # costs no disk and no copy; the builder picks up anything over 10 MB there.
+    _reuse=""
+    _cached=$(find "$M2_SRC_CACHE/archive" -maxdepth 1 -type f -size +10M \
+                   ! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' \
+                   ! -name '*.meta' 2>/dev/null | sort | head -1)
+    if [ -n "$_cached" ]; then
+        _reuse="-v $_cached:/archive/$(basename "$_cached"):ro"
+    fi
+
     say "Starting the client build in the background."
-    say "It downloads over a gigabyte and then repacks it, so it takes a"
-    say "while -- often 20 to 60 minutes depending on your connection."
+    if [ -n "$_reuse" ]; then
+        say "It reuses the archive already downloaded for the server, so this"
+        say "is a repack rather than another download -- but repacking a"
+        say "gigabyte still takes a while, and longer on a slow disk."
+    else
+        say "It downloads over a gigabyte and then repacks it, so it takes a"
+        say "while -- often 20 to 60 minutes depending on your connection."
+    fi
     say ""
     say "You do not have to wait for it. The server is usable now; the"
     say "download link simply starts working when this finishes."
@@ -1779,7 +1800,7 @@ start_client_build() {
     # nohup rather than setsid, because we want $! to be the process we are
     # about to watch: setsid forks, so $! would be a pid that exits at once and
     # every check below would think the build had finished.
-    nohup sh -c "cd '$INSTALL_DIR' && docker compose run --rm -T client-builder" \
+    nohup sh -c "cd '$INSTALL_DIR' && docker compose run --rm -T $_reuse client-builder" \
         >> "$CLIENT_LOG" 2>&1 < /dev/null &
     _bpid=$!
     CLIENT_STATE="building"
