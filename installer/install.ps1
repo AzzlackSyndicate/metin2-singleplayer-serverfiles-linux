@@ -2103,7 +2103,21 @@ function Start-ClientBuild {
     # mount it read-only and name the file instead of bind-mounting it.
     $reuseArgs = @()
     $cachedArchive = ''
-    if ($haveBuilder) {
+    # If the operator handed us the unpacked server files, the client is already
+    # sitting in them as Client\Client.zip -- around 1.2 GB that would otherwise
+    # be fetched from MEGA a second time, on a share whose quota runs out
+    # regularly. The builder scans its drop folder for a .zip/.rar/.7z, so
+    # mounting that folder is all it takes; it filters ClientVS22.zip (the C++
+    # source that sits beside it) out by name on its own.
+    if ($haveBuilder -and $script:SrcRefDir) {
+        $refClient = Join-Path $script:SrcRefDir 'Client'
+        if (Test-Path -LiteralPath $refClient -PathType Container) {
+            $p = ConvertTo-MountPath $refClient
+            $reuseArgs = @('-v', "$($p):/archive:ro")
+            Write-Info "the client comes from $p -- nothing to download"
+        }
+    }
+    if ($haveBuilder -and $reuseArgs.Count -eq 0) {
         try {
             $findCmd = 'find /srccache/cache/archive -maxdepth 1 -type f -size +10M ' +
                        "! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' " +

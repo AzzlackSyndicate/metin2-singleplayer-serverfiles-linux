@@ -1809,12 +1809,25 @@ start_client_build() {
     # them. The builder scans /archive for anything over 10 MB anyway, so it
     # never needs to be told the name. (This mount replaces the compose file's
     # ./client-archive at the same target, which is what we want here.)
+    # If we were handed the unpacked server files, the client is already inside
+    # them as Client/Client.zip -- about 1.2 GB that would otherwise come down
+    # from MEGA a second time, on a share whose quota runs out regularly. The
+    # builder scans its drop folder for a .zip/.rar/.7z and filters out the
+    # ClientVS22.zip beside it (the C++ source) by name, so the folder is all
+    # it needs.
     _reuse=""
-    _cachedir="$M2_SRC_CACHE/archive"
-    if [ -n "$(find "$_cachedir" -maxdepth 1 -type f -size +10M \
-                    ! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' \
-                    ! -name '*.meta' 2>/dev/null | head -1)" ]; then
+    _cachedir=""
+    if [ -n "$M2_SRC_REFERENCE_DIR" ] && [ -d "$M2_SRC_REFERENCE_DIR/Client" ]; then
+        _cachedir="$M2_SRC_REFERENCE_DIR/Client"
         _reuse=1
+        info "the client comes from $_cachedir -- nothing to download"
+    else
+        _cachedir="$M2_SRC_CACHE/archive"
+        if [ -n "$(find "$_cachedir" -maxdepth 1 -type f -size +10M \
+                        ! -name '.megatmp.*' ! -name '*.part' ! -name '*.tmp' \
+                        ! -name '*.meta' 2>/dev/null | head -1)" ]; then
+            _reuse=1
+        fi
     fi
 
     say "Starting the client build in the background."
