@@ -1109,6 +1109,13 @@ write_env() {
     env_set "$_env" M2_AUTH_PORT      "$AUTH_PORT"
     env_set "$_env" M2_GAME_PORT_RANGE "$GAME_PORTS"
 
+    # Tell the panel whether anybody but this machine can reach the server, so
+    # its introduction says "give people this address" or "nobody else can join"
+    # accordingly. Note this is NOT the same question as the panel's bind
+    # address: with --domain the panel also binds to 127.0.0.1, but the server
+    # is thoroughly public. Only --local means genuinely local.
+    env_set "$_env" M2_LOCAL_ONLY "$([ "$LOCAL_ONLY" = "1" ] && echo 1 || echo 0)"
+
     # Where the panel listens on the host.
     #
     #   with a domain : 127.0.0.1 only, with nginx in front doing TLS. The

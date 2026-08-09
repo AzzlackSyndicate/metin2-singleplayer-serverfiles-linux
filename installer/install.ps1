@@ -1237,6 +1237,11 @@ function Write-Configuration {
     # Everything points at this computer and nowhere else.
     Set-EnvValue $envPath 'M2_PUBLIC_ADDRESS'   '127.0.0.1'
     Set-EnvValue $envPath 'M2_CLIENT_ADDRESS'   '127.0.0.1'
+    # A Windows install is always local-only, so the panel's introduction should
+    # say "nobody else can join" rather than "hand this address out". The panel
+    # cannot work that out on its own -- a public Linux server behind nginx also
+    # binds it to 127.0.0.1 -- so we state it here.
+    Set-EnvValue $envPath 'M2_LOCAL_ONLY'       '1'
     Set-EnvValue $envPath 'M2_AUTH_PORT'        "$($script:AuthPort)"
     Set-EnvValue $envPath 'M2_GAME_PORT_RANGE'  $script:GamePorts
     # The base compose file publishes the panel as "${M2_PANEL_PUBLIC_PORT}:7788",

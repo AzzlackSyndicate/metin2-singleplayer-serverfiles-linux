@@ -252,7 +252,7 @@ REQUIRED_CONF = ("flask_secret", "db_user", "db_pass", "salt", "pass_hash")
 # unless it is set, so an existing installation behaves exactly as before.
 ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash",
             "bind", "port", "brand", "client_url", "client_name",
-            "inventory_slots", "max_item_count", "status_ports")
+            "inventory_slots", "max_item_count", "status_ports", "local_only")
 
 def _conf_from_env():
     """The config keys the environment sets, already turned into the right type."""
@@ -266,6 +266,13 @@ def _conf_from_env():
                 out[key] = int(raw)
             except ValueError:
                 continue                      # nonsense value: let the default stand
+        elif key == "local_only":
+            # Whether this server is reachable only from the machine it runs on.
+            # It cannot be inferred from "bind": a Linux server behind nginx
+            # also binds the panel to 127.0.0.1 while being perfectly public,
+            # and guessing there would tell a working host that nobody can
+            # reach it. So the installer states it, and the default is "no".
+            out[key] = raw.lower() in ("1", "true", "yes", "on")
         elif key == "status_ports":
             # "11002,13000" -> [11002, 13000]
             ports = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
@@ -611,12 +618,51 @@ T = {
  "about_uptime": {"en":"The server is staying online. It is paid for and will keep running for the foreseeable future — your characters will not disappear overnight.",
                   "de":"Der Server bleibt online. Er ist bezahlt und läuft auf absehbare Zeit weiter — deine Charaktere sind nicht über Nacht weg.",
                   "tr":"Sunucu açık kalacak. Ücreti ödendi ve öngörülebilir gelecekte çalışmaya devam edecek — karakterlerin bir gecede kaybolmayacak."},
- "about_oss":    {"en":"The complete installation files will be released as open source soon, so anyone who wants to can set up exactly the same server themselves.",
-                  "de":"Die kompletten Installationsdateien werden demnächst als Open Source veröffentlicht, damit jeder, der möchte, sich genau denselben Server selbst aufsetzen kann.",
-                  "tr":"Kurulum dosyalarının tamamı yakında açık kaynak olarak yayınlanacak, böylece isteyen aynı sunucuyu kendisi kurabilir."},
+ "about_oss":    {"en":"Everything needed to run this is open source. Anyone can set up exactly the same server on their own machine with a single command — no Metin2 knowledge required.",
+                  "de":"Alles, was dafür nötig ist, ist Open Source. Jeder kann sich mit einem einzigen Befehl genau denselben Server selbst aufsetzen — ganz ohne Metin2-Vorwissen.",
+                  "tr":"Bunu çalıştırmak için gereken her şey açık kaynak. İsteyen herkes tek bir komutla aynı sunucuyu kendi makinesinde kurabilir — Metin2 bilgisi gerekmez."},
  "about_contact":{"en":"If you feel the server needs adjusting — the rates, movement speed, or anything else — write to",
                   "de":"Wenn du findest, dass am Server etwas angepasst werden sollte — die Raten, die Laufgeschwindigkeit oder irgendetwas anderes — schreib an",
                   "tr":"Sunucuda bir şeyin ayarlanması gerektiğini düşünüyorsan — oranlar, hareket hızı ya da başka herhangi bir şey — şu adrese yaz:"},
+ # --- the operator's orientation, shown once they are logged in ---
+ # This is the first thing the person who installed the server sees. It exists
+ # because the dashboard used to open straight onto three cards with no
+ # explanation of what had just been built or what to do with it.
+ "op_title":     {"en":"Your server is running","de":"Dein Server läuft","tr":"Sunucun çalışıyor"},
+ "op_intro":     {"en":"Everything is up: the game, the database and this panel. The badge at the top says whether the game itself is accepting connections — if it ever reads offline while you are sure it should not, that is the first place to look.",
+                  "de":"Alles läuft: das Spiel, die Datenbank und dieses Panel. Die Anzeige oben sagt dir, ob das Spiel selbst Verbindungen annimmt — falls dort einmal „offline“ steht, obwohl du sicher bist, dass es nicht so sein sollte, schau zuerst dort nach.",
+                  "tr":"Her şey ayakta: oyun, veritabanı ve bu panel. Üstteki rozet oyunun bağlantı kabul edip etmediğini gösterir — bir gün „çevrimdışı“ yazıyorsa ve bundan emin değilsen, önce oraya bak."},
+ "op_share":     {"en":"To let someone play, give them the address of this page. They register an account here and download the game from the same page — it already points at your server, so there is nothing for them to configure.",
+                  "de":"Damit jemand spielen kann, gib ihm die Adresse dieser Seite. Er registriert sich hier und lädt das Spiel von derselben Seite — es zeigt bereits auf deinen Server, es gibt für ihn nichts einzustellen.",
+                  "tr":"Birinin oynaması için ona bu sayfanın adresini ver. Hesabını burada açar ve oyunu aynı sayfadan indirir — oyun zaten senin sunucunu gösteriyor, ayarlaması gereken bir şey yok."},
+ # Shown instead of op_share when the installer reported a loopback-only setup.
+ "op_local_t":   {"en":"This server is for you alone","de":"Dieser Server ist nur für dich","tr":"Bu sunucu yalnızca sana ait"},
+ "op_local":     {"en":"This was installed as a local server, so everything listens on this computer only. Nobody else can join — not over the internet, and not from another device on the same network. No port was opened and no firewall rule was created. Register an account here, download the game from this page, and play.",
+                  "de":"Das hier wurde als lokaler Server installiert, es lauscht also alles ausschließlich auf diesem Computer. Niemand sonst kann mitspielen — weder über das Internet noch von einem anderen Gerät im selben Netzwerk. Es wurde kein Port geöffnet und keine Firewallregel angelegt. Registriere hier ein Konto, lade das Spiel von dieser Seite und spiel los.",
+                  "tr":"Bu, yerel bir sunucu olarak kuruldu; yani her şey yalnızca bu bilgisayarda dinliyor. Başka kimse katılamaz — ne internet üzerinden ne de aynı ağdaki başka bir cihazdan. Hiçbir port açılmadı ve hiçbir güvenlik duvarı kuralı oluşturulmadı. Buradan bir hesap aç, oyunu bu sayfadan indir ve oyna."},
+ "op_local_hint":{"en":"If you later want friends to play, do not open ports on your home router: that hands your home address to every player, your upload speed becomes the bottleneck, and the server is gone whenever this computer is. Rent a small Linux server instead and run the installer there — the project's documentation has the one command for it.",
+                  "de":"Wenn später Freunde mitspielen sollen, öffne keine Ports an deinem Heimrouter: Das gibt deine Heimadresse an jeden Spieler weiter, dein Upload wird zum Flaschenhals, und der Server ist weg, sobald dieser Rechner aus ist. Miete stattdessen einen kleinen Linux-Server und führe den Installer dort aus — der eine Befehl dafür steht in der Dokumentation des Projekts.",
+                  "tr":"İleride arkadaşlarının da oynamasını istersen, ev yönlendiricinde port açma: bu, ev adresini her oyuncuya verir, yükleme hızın darboğaz olur ve bu bilgisayar kapandığında sunucu da gider. Bunun yerine küçük bir Linux sunucu kirala ve kurulumu orada çalıştır — bunun tek komutu projenin belgelerinde."},
+ "op_secure":    {"en":"Do this first: the server files ship with two accounts, admin and test, both with the password 123456789. Everyone who has ever seen these files knows them. Change or delete them before anyone else can reach your server.",
+                  "de":"Mach das als Erstes: Die Serverdateien bringen zwei Konten mit, admin und test, beide mit dem Passwort 123456789. Jeder, der diese Dateien je gesehen hat, kennt sie. Ändere oder lösche sie, bevor jemand anderes deinen Server erreichen kann.",
+                  "tr":"Önce şunu yap: sunucu dosyaları admin ve test adında iki hesapla gelir, ikisinin de şifresi 123456789. Bu dosyaları görmüş herkes bunları bilir. Başkası sunucuna ulaşabilmeden önce bunları değiştir veya sil."},
+ "op_rates":     {"en":"Rates decide how fast the whole server plays: experience, item drops and yang. 100% is the game exactly as it shipped. Saving restarts the game for well under a minute, so players are briefly disconnected.",
+                  "de":"Die Raten bestimmen, wie schnell sich der ganze Server spielt: Erfahrung, Item-Drops und Yang. 100 % ist das Spiel genau so, wie es ausgeliefert wurde. Beim Speichern startet das Spiel für deutlich unter einer Minute neu, Spieler fliegen also kurz raus.",
+                  "tr":"Oranlar tüm sunucunun ne kadar hızlı oynandığını belirler: tecrübe, eşya düşüşü ve yang. %100, oyunun çıktığı hâlidir. Kaydettiğinde oyun bir dakikadan çok kısa süre yeniden başlar, oyuncular kısa süre düşer."},
+ "op_players":   {"en":"Under Players you find every character with the account it belongs to. Open one to give items or yang, or to set a level. Those go straight into the database, so the player has to log out and back in before they see them.",
+                  "de":"Unter „Spieler“ findest du jeden Charakter mit dem Konto, zu dem er gehört. Öffne einen, um Gegenstände oder Yang zu geben oder ein Level zu setzen. Das geht direkt in die Datenbank — der Spieler muss sich also aus- und wieder einloggen, bevor er es sieht.",
+                  "tr":"„Oyuncular“ altında her karakteri, ait olduğu hesapla birlikte görürsün. Eşya ya da yang vermek veya seviye ayarlamak için birini aç. Bunlar doğrudan veritabanına yazılır, yani oyuncunun görmesi için çıkıp yeniden girmesi gerekir."},
+ "op_limits":    {"en":"Teleport and Running speed are different: they act on a character who is online right now, through a helper script inside the game. A standard Docker install does not include that helper, so on one of those the two buttons will report that they got no answer — which is the panel being honest rather than pretending it worked.",
+                  "de":"Teleportieren und Laufgeschwindigkeit sind anders: Sie wirken auf einen gerade eingeloggten Charakter, über ein Hilfsskript im Spiel. Eine normale Docker-Installation bringt dieses Skript nicht mit — dort melden die beiden Schaltflächen deshalb, dass sie keine Antwort bekommen haben. Das ist das Panel, das ehrlich bleibt, statt Erfolg vorzutäuschen.",
+                  "tr":"Işınla ve Koşma hızı farklıdır: o anda çevrimiçi olan bir karaktere, oyunun içindeki bir yardımcı betik üzerinden etki ederler. Standart bir Docker kurulumu bu betiği içermez, dolayısıyla orada iki düğme de yanıt alamadığını bildirir — bu, panelin başarılı gibi davranmak yerine dürüst kalmasıdır."},
+ "op_forgot":    {"en":"When a player forgets their password, you make them a reset link below. It works once and expires after a day — you never see or set their password yourself.",
+                  "de":"Wenn ein Spieler sein Passwort vergisst, erzeugst du ihm unten einen Reset-Link. Er funktioniert einmal und verfällt nach einem Tag — du siehst oder setzt sein Passwort nie selbst.",
+                  "tr":"Bir oyuncu şifresini unutursa, aşağıda ona bir sıfırlama bağlantısı oluşturursun. Bir kez çalışır ve bir gün sonra geçersiz olur — şifresini asla sen görmez ya da belirlemezsin."},
+ "op_more":      {"en":"Everything else — backups, moving the server, rebuilding the client for a new address — is in the project's documentation.",
+                  "de":"Alles Weitere — Sicherungen, Serverumzug, den Client für eine neue Adresse neu bauen — steht in der Dokumentation des Projekts.",
+                  "tr":"Geri kalan her şey — yedekler, sunucu taşıma, yeni bir adres için istemciyi yeniden derleme — projenin belgelerinde."},
+ "op_hide":      {"en":"Got it — hide this","de":"Verstanden — ausblenden","tr":"Anladım — gizle"},
+ "op_show":      {"en":"Show the introduction again","de":"Einführung wieder anzeigen","tr":"Tanıtımı yeniden göster"},
  # --- admin-made password reset links ---
  "reset_title":  {"en":"Password reset link","de":"Passwort-Reset-Link","tr":"Şifre sıfırlama bağlantısı"},
  "reset_hint":   {"en":"A player who forgot their password writes to you (the address is on the front page). Type their username here, send them the link this creates, and they choose a new password themselves. Each link works once and expires after 24 hours; making a new one cancels the old.",
@@ -807,7 +853,8 @@ def inject_i18n():
     return {"t": t, "langs": LANGS, "curlang": lang(), "csrf_token": csrf_token(),
             "brand": BRAND, "srv": server_status(), "rates": public_rates(),
             "dlsize": human_size(CLIENT_FACTS["size"]) if CLIENT_FACTS["size"] else "",
-            "dlsha": CLIENT_FACTS["sha256"]}
+            "dlsha": CLIENT_FACTS["sha256"],
+            "local_only": bool(CONF.get("local_only", False))}
 
 @app.route("/lang/<code>")
 def setlang(code):
@@ -1258,6 +1305,37 @@ TPL_ACCOUNT = BASE.replace("__BODY__", """
 </form></div>""")
 
 TPL_DASH = BASE.replace("__BODY__", """
+<a href="#" id="introshow" style="display:none;font-size:13px" class="muted">{{t('op_show')}}</a>
+<div class="card about" id="intro">
+<h3>✅ {{t('op_title')}}</h3>
+<p>{{t('op_intro')}}</p>
+{% if local_only %}
+<p><b>🔒 {{t('op_local_t')}}.</b> {{t('op_local')}}</p>
+<p>{{t('op_local_hint')}}</p>
+{% else %}
+<p>{{t('op_share')}}</p>
+<p><b>{{t('op_secure')}}</b></p>
+{% endif %}
+<p>{{t('op_rates')}}</p>
+<p>{{t('op_players')}}</p>
+<p>{{t('op_limits')}}</p>
+<p>{{t('op_forgot')}}</p>
+<p class="muted">{{t('op_more')}}</p>
+<button class="btn" id="introhide" type="button">{{t('op_hide')}}</button>
+</div>
+<script>
+(function(){
+ var box=document.getElementById('intro'), hide=document.getElementById('introhide'),
+     show=document.getElementById('introshow'), KEY='m2_intro_hidden';
+ if(!box||!hide||!show) return;
+ function apply(h){ box.style.display = h ? 'none' : ''; show.style.display = h ? '' : 'none'; }
+ var stored=false;
+ try { stored = localStorage.getItem(KEY)==='1'; } catch(e){}   // private mode: just show it
+ apply(stored);
+ hide.addEventListener('click',function(){ try{localStorage.setItem(KEY,'1');}catch(e){} apply(true); });
+ show.addEventListener('click',function(e){ e.preventDefault(); try{localStorage.removeItem(KEY);}catch(e){} apply(false); });
+})();
+</script>
 <div class="card">
 <h3 class="help" title="{{t('tip_rates')}}">{{t('rates_nav')}}</h3>
 <p class="muted">{{t('rates_dash_hint')}}</p>

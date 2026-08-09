@@ -204,6 +204,12 @@ services:
       # player.item.count is TINYINT UNSIGNED. Without this the panel allows
       # 65535 and MySQL truncates in silence -- 1000 potions become 255.
       M2_MAX_ITEM_COUNT: "${M2_MAX_ITEM_COUNT:-255}"
+      # 1 when this server is reachable only from the machine it runs on -- the
+      # Windows installer sets it, and so does install.sh --local. The panel
+      # then tells the operator that nobody else can join, instead of telling
+      # them to hand the address out. It cannot be inferred from the bind
+      # address: a public server behind nginx also binds the panel to 127.0.0.1.
+      M2_LOCAL_ONLY: "${M2_LOCAL_ONLY:-0}"
 
       # Server rates. The panel runs M2PANEL_RATES_SCRIPT when somebody saves
       # the rates page and reads M2PANEL_RATES_STATUS back to report how it
