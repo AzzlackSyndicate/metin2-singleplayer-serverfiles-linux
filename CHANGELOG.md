@@ -17,6 +17,19 @@ every version here.
 
 ---
 
+## 1.1.5 — 2026-08-10
+
+### Changed
+
+- The installer now ends with the panel address and the game, instead of
+  opening with them and scrolling them off the screen.
+- A local Windows install no longer prints an admin passphrase. The panel does
+  not ask for one there.
+- Removed the note about the shipped `admin` and `test` accounts. They are
+  deleted during setup.
+
+---
+
 ## 1.1.4 — 2026-08-10
 
 ### Fixed

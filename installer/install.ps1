@@ -2405,14 +2405,98 @@ function Merge-ClientSideLogs {
 
 function Show-Summary {
     $url = "http://127.0.0.1:$($script:PanelPort)"
+    # A local install has no passphrase -- the panel lets you straight in,
+    # because it listens to this computer and nothing else. Printing a password
+    # nobody is ever asked for only makes people think they have to keep it.
+    $showPassword = -not $script:LocalOnly
 
+    # Everything below is ordered so that the part people actually need is the
+    # last thing on screen when the installer finishes. The warnings and the
+    # reference material come first: they are worth reading once, and they
+    # scroll away, which is right for a thing you read once.
+
+    # --------------------------------------------------- the important caveat
+    if ($script:LocalOnly) {
+        Write-Host ''
+        Write-Host ''
+        Write-Host '  ================================================================' -ForegroundColor Yellow
+        Write-Host '    THIS SERVER IS FOR YOU ALONE' -ForegroundColor Yellow
+        Write-Host '  ================================================================' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Everything installed here listens on 127.0.0.1, which means'
+        Write-Host '  "this computer and nothing else".'
+        Write-Host ''
+        Write-Host '    - Nobody else can join. Not your friends over the internet,'
+        Write-Host '      and not someone on the same Wi-Fi in the same room.'
+        Write-Host '    - No port was opened. No firewall rule was created. Nothing'
+        Write-Host '      about this PC is now reachable that was not before.'
+        Write-Host '    - Your home IP address has not been given out to anyone.'
+        Write-Host ''
+        Write-Host '  That is on purpose. It lets you play, build your server and try'
+        Write-Host '  things out with no risk at all.'
+        Write-Host ''
+        Write-Host '  If you later want friends to play on it:' -ForegroundColor White
+        Write-Host ''
+        Write-Host '    Do not open ports on your home router. A home connection means'
+        Write-Host '    handing your home address to every player, your upload speed is'
+        Write-Host '    the bottleneck, and the server disappears whenever the PC does.'
+        Write-Host ''
+        Write-Host '    Rent a small Linux VPS instead -- 4 GB of memory is about 5 EUR'
+        Write-Host '    a month at Hetzner, Contabo or Netcup -- and run one line on it:'
+        Write-Host ''
+        Write-Host '        curl -fsSL https://raw.githubusercontent.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/main/installer/install.sh | sudo sh' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '    That installer does the opposite of this one: it publishes the'
+        Write-Host '    game to the internet, opens the firewall, and can put a real'
+        Write-Host '    HTTPS certificate on the admin panel. Your characters here can'
+        Write-Host '    be moved across with a database backup.'
+        Write-Host ''
+    }
+
+    # ------------------------------------------------------------ day to day
+    Write-Host '  Day to day' -ForegroundColor White
     Write-Host ''
+    Write-Host "     cd `"$($script:InstallDir)`""
+    Write-Host '     docker compose ps                 what is running'
+    Write-Host '     docker compose logs -f game       watch the game log'
+    Write-Host '     docker compose restart            restart everything'
+    Write-Host '     docker compose down               stop (keeps all player data)'
+    Write-Host '     docker compose up -d              start again'
+    Write-Host ''
+    Write-Host '     The one dangerous command is "docker compose down -v".' -ForegroundColor Yellow
+    Write-Host '     The -v deletes every account, character and item, with no undo.'
+    Write-Host ''
+    if ($script:LocalOnly -and $script:ClientState -ne 'unavailable') {
+        Write-Host "     The game lives in $($script:ClientDir)." -ForegroundColor White
+        Write-Host '     If the Desktop shortcut goes missing, or the unpacking did not'
+        Write-Host '     finish, this puts it right -- and does nothing when there is'
+        Write-Host '     nothing to do:'
+        Write-Host "         powershell -ExecutionPolicy Bypass -File `"$(Join-Path $script:InstallDir 'client-setup.ps1')`""
+        Write-Host ''
+    }
+    Write-Host '     The original server files are kept in a Docker volume, so'
+    Write-Host '     re-installing never downloads them twice. Once you are happy'
+    Write-Host '     with the server you can have those few gigabytes back:'
+    Write-Host "         docker volume rm $($script:SrcVolume)"
+    Write-Host "         docker image rm $($script:FetcherImage)"
+    Write-Host ''
+    Write-Host '     Docker Desktop must be running for the server to be up. It'
+    Write-Host '     starts with Windows by default, and the server comes back with'
+    Write-Host '     it, so after a reboot the panel link just works again.'
+    Write-Host ''
+    Write-Host '     To update later, run this installer again. It keeps your'
+    Write-Host '     accounts, characters and settings, and tells you what version'
+    Write-Host '     you are on before it changes anything.'
+    Write-Host ''
+
+    # ------------------------------------------------- what you came here for
     Write-Host ''
     Write-Host '  ================================================================' -ForegroundColor Green
     Write-Host '    YOUR METIN2 SERVER IS INSTALLED' -ForegroundColor Green
     Write-Host '  ================================================================' -ForegroundColor Green
     Write-Host ''
-    Write-Host '  Write these three things down now.'
+    if ($showPassword) { Write-Host '  Write these three things down now.' }
+    else               { Write-Host '  These two are what you need.' }
     Write-Host ''
 
     # ------------------------------------------------------------------- 1
@@ -2506,106 +2590,42 @@ function Show-Summary {
     Write-Host "       $url" -ForegroundColor Cyan
     Write-Host ''
     Write-Host '     Open that in your browser. It only works on this PC.'
-    Write-Host ''
-    Write-Rule
+    if (-not $showPassword) {
+        Write-Host '     There is no password to type: nobody else can reach it.'
+    }
     Write-Host ''
 
     # ------------------------------------------------------------------- 3
-    Write-Host '  3. YOUR ADMIN PANEL PASSWORD' -ForegroundColor White
-    Write-Host ''
-    if ($script:PanelPasswordKnown -and $script:PanelPassword) {
-        Write-Host "       $($script:PanelPassword)" -ForegroundColor Cyan
+    if ($showPassword) {
+        Write-Rule
         Write-Host ''
-        if ($script:PanelPasswordNew) {
-            Write-Host '     Generated on this PC just now, for this server only.'
+        Write-Host '  3. YOUR ADMIN PANEL PASSWORD' -ForegroundColor White
+        Write-Host ''
+        if ($script:PanelPasswordKnown -and $script:PanelPassword) {
+            Write-Host "       $($script:PanelPassword)" -ForegroundColor Cyan
+            Write-Host ''
+            if ($script:PanelPasswordNew) {
+                Write-Host '     Generated on this PC just now, for this server only.'
+            } else {
+                Write-Host '     This is the password from when the server was first'
+                Write-Host '     installed. It has not been changed.'
+            }
+            Write-Host "     It is also kept in $(Join-Path $script:InstallDir '.env')"
+            Write-Host '     so you can look it up again.'
         } else {
-            Write-Host '     This is the password from when the server was first'
-            Write-Host '     installed. It has not been changed.'
+            Write-Host '       (unknown -- this server was installed before)' -ForegroundColor Yellow
+            Write-Host ''
+            Write-Host '     The panel keeps only a one-way hash of its password, so it'
+            Write-Host '     cannot be recovered. To set a new one:'
+            Write-Host ''
+            Write-Host "         cd `"$($script:InstallDir)`""
+            Write-Host '         docker compose exec panel rm /usr/local/etc/m2panel.conf'
+            Write-Host '         docker compose restart panel'
+            Write-Host '         docker compose logs panel | Select-String -Context 0,4 "ADMIN PANEL PASSWORD"'
         }
-        Write-Host "     It is also kept in $(Join-Path $script:InstallDir '.env')"
-        Write-Host '     so you can look it up again.'
-    } else {
-        Write-Host '       (unknown -- this server was installed before)' -ForegroundColor Yellow
         Write-Host ''
-        Write-Host '     The panel keeps only a one-way hash of its password, so it'
-        Write-Host '     cannot be recovered. To set a new one:'
-        Write-Host ''
-        Write-Host "         cd `"$($script:InstallDir)`""
-        Write-Host '         docker compose exec panel rm /usr/local/etc/m2panel.conf'
-        Write-Host '         docker compose restart panel'
-        Write-Host '         docker compose logs panel | Select-String -Context 0,4 "ADMIN PANEL PASSWORD"'
     }
-    Write-Host ''
     Write-Host '  ================================================================' -ForegroundColor Green
-    Write-Host ''
-
-    # --------------------------------------------------- the important caveat
-    Write-Host '  ================================================================' -ForegroundColor Yellow
-    Write-Host '    THIS SERVER IS FOR YOU ALONE' -ForegroundColor Yellow
-    Write-Host '  ================================================================' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host '  Everything installed here listens on 127.0.0.1, which means'
-    Write-Host '  "this computer and nothing else".'
-    Write-Host ''
-    Write-Host '    - Nobody else can join. Not your friends over the internet,'
-    Write-Host '      and not someone on the same Wi-Fi in the same room.'
-    Write-Host '    - No port was opened. No firewall rule was created. Nothing'
-    Write-Host '      about this PC is now reachable that was not before.'
-    Write-Host '    - Your home IP address has not been given out to anyone.'
-    Write-Host ''
-    Write-Host '  That is on purpose. It lets you play, build your server and try'
-    Write-Host '  things out with no risk at all.'
-    Write-Host ''
-    Write-Host '  If you later want friends to play on it:' -ForegroundColor White
-    Write-Host ''
-    Write-Host '    Do not open ports on your home router. A home connection means'
-    Write-Host '    handing your home address to every player, your upload speed is'
-    Write-Host '    the bottleneck, and the server disappears whenever the PC does.'
-    Write-Host ''
-    Write-Host '    Rent a small Linux VPS instead -- 4 GB of memory is about 5 EUR'
-    Write-Host '    a month at Hetzner, Contabo or Netcup -- and run one line on it:'
-    Write-Host ''
-    Write-Host '        curl -fsSL https://raw.githubusercontent.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/main/installer/install.sh | sudo sh' -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host '    That installer does the opposite of this one: it publishes the'
-    Write-Host '    game to the internet, opens the firewall, and can put a real'
-    Write-Host '    HTTPS certificate on the admin panel. Your characters here can'
-    Write-Host '    be moved across with a database backup.'
-    Write-Host ''
-
-    # ------------------------------------------------------------ day to day
-    Write-Host '  Day to day' -ForegroundColor White
-    Write-Host ''
-    Write-Host "     cd `"$($script:InstallDir)`""
-    Write-Host '     docker compose ps                 what is running'
-    Write-Host '     docker compose logs -f game       watch the game log'
-    Write-Host '     docker compose restart            restart everything'
-    Write-Host '     docker compose down               stop (keeps all player data)'
-    Write-Host '     docker compose up -d              start again'
-    Write-Host ''
-    Write-Host '     The one dangerous command is "docker compose down -v".' -ForegroundColor Yellow
-    Write-Host '     The -v deletes every account, character and item, with no undo.'
-    Write-Host ''
-    if ($script:LocalOnly -and $script:ClientState -ne 'unavailable') {
-        Write-Host "     The game lives in $($script:ClientDir)." -ForegroundColor White
-        Write-Host '     If the Desktop shortcut goes missing, or the unpacking did not'
-        Write-Host '     finish, this puts it right -- and does nothing when there is'
-        Write-Host '     nothing to do:'
-        Write-Host "         powershell -ExecutionPolicy Bypass -File `"$(Join-Path $script:InstallDir 'client-setup.ps1')`""
-        Write-Host ''
-    }
-    Write-Host '     The original server files are kept in a Docker volume, so'
-    Write-Host '     re-installing never downloads them twice. Once you are happy'
-    Write-Host '     with the server you can have those few gigabytes back:'
-    Write-Host "         docker volume rm $($script:SrcVolume)"
-    Write-Host "         docker image rm $($script:FetcherImage)"
-    Write-Host ''
-    Write-Host '     Docker Desktop must be running for the server to be up. It'
-    Write-Host '     starts with Windows by default, and the server comes back with'
-    Write-Host '     it, so after a reboot the panel link just works again.'
-    Write-Host ''
-    Write-Host '  Two accounts already exist for testing:' -ForegroundColor White
-    Write-Host '     admin / 123456789        test / 123456789'
     Write-Host ''
 }
 

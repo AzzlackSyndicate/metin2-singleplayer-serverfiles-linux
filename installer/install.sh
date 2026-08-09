@@ -2026,6 +2026,49 @@ panel_url() {
 }
 
 summary() {
+    printf '\n'
+
+    # ------------------------------------------------------------- the rest
+    printf '  %sHow players connect%s\n' "$C_BOLD" "$C_RESET"
+    printf '\n'
+    if [ "$LOCAL_ONLY" = "1" ]; then
+        printf '     Nobody else can. --local binds everything to 127.0.0.1, so this\n'
+        printf '     server is reachable from this machine only.\n'
+    else
+        printf '     Server address : %s%s%s\n' "$C_BOLD" "$PUBLIC_ADDRESS" "$C_RESET"
+        printf '     Login port     : %s\n' "$AUTH_PORT"
+        printf '     Channel ports  : %s\n' "$GAME_PORTS"
+        printf '\n'
+    fi
+    printf '\n'
+    printf '  %sDay to day%s\n' "$C_BOLD" "$C_RESET"
+    printf '\n'
+    printf '     cd %s\n' "$INSTALL_DIR"
+    printf '     docker compose ps                 what is running\n'
+    printf '     docker compose logs -f game       watch the game log\n'
+    printf '     docker compose restart            restart everything\n'
+    printf '     docker compose down               stop (keeps all player data)\n'
+    printf '     docker compose up -d              start again\n'
+    printf '\n'
+    printf '     %sThe one dangerous command is "docker compose down -v".%s The -v\n' "$C_YELLOW" "$C_RESET"
+    printf '     deletes every account, character and item, with no undo.\n'
+    printf '\n'
+    if [ "$LOCAL_ONLY" != "1" ]; then
+        printf '  %sIf players cannot connect%s\n' "$C_BOLD" "$C_RESET"
+        printf '\n'
+        printf '     Almost always one of two things:\n'
+        printf '     1. Your VPS provider blocks the ports in their own control\n'
+        printf '        panel, outside this machine. Open TCP %s and %s there.\n' "$AUTH_PORT" "$GAME_PORTS"
+        printf '     2. The address is wrong. It must be %s in\n' "$PUBLIC_ADDRESS"
+        printf '        %s -- players log in fine and then hang\n' "$INSTALL_DIR/.env"
+        printf '        on "connecting to the server" when it is not.\n'
+        printf '\n'
+    fi
+    printf '  Back up your players with the recipe in %s/README.md\n' "$INSTALL_DIR"
+    printf '\n'
+    # The block people actually need is last, so it is what is on screen
+    # when this finishes. Everything above it is read once.
+
     _url=$(panel_url)
 
     printf '\n\n'
@@ -2127,49 +2170,6 @@ summary() {
     fi
     printf '\n'
     printf '  %s================================================================%s\n' "$C_GREEN$C_BOLD" "$C_RESET"
-    printf '\n'
-
-    # ------------------------------------------------------------- the rest
-    printf '  %sHow players connect%s\n' "$C_BOLD" "$C_RESET"
-    printf '\n'
-    if [ "$LOCAL_ONLY" = "1" ]; then
-        printf '     Nobody else can. --local binds everything to 127.0.0.1, so this\n'
-        printf '     server is reachable from this machine only.\n'
-    else
-        printf '     Server address : %s%s%s\n' "$C_BOLD" "$PUBLIC_ADDRESS" "$C_RESET"
-        printf '     Login port     : %s\n' "$AUTH_PORT"
-        printf '     Channel ports  : %s\n' "$GAME_PORTS"
-        printf '\n'
-        printf '     Two accounts already exist for testing:\n'
-        printf '         admin / 123456789      test / 123456789\n'
-        printf '     Change or delete them before you let strangers in.\n'
-    fi
-    printf '\n'
-    printf '  %sDay to day%s\n' "$C_BOLD" "$C_RESET"
-    printf '\n'
-    printf '     cd %s\n' "$INSTALL_DIR"
-    printf '     docker compose ps                 what is running\n'
-    printf '     docker compose logs -f game       watch the game log\n'
-    printf '     docker compose restart            restart everything\n'
-    printf '     docker compose down               stop (keeps all player data)\n'
-    printf '     docker compose up -d              start again\n'
-    printf '\n'
-    printf '     %sThe one dangerous command is "docker compose down -v".%s The -v\n' "$C_YELLOW" "$C_RESET"
-    printf '     deletes every account, character and item, with no undo.\n'
-    printf '\n'
-    if [ "$LOCAL_ONLY" != "1" ]; then
-        printf '  %sIf players cannot connect%s\n' "$C_BOLD" "$C_RESET"
-        printf '\n'
-        printf '     Almost always one of two things:\n'
-        printf '     1. Your VPS provider blocks the ports in their own control\n'
-        printf '        panel, outside this machine. Open TCP %s and %s there.\n' "$AUTH_PORT" "$GAME_PORTS"
-        printf '     2. The address is wrong. It must be %s in\n' "$PUBLIC_ADDRESS"
-        printf '        %s -- players log in fine and then hang\n' "$INSTALL_DIR/.env"
-        printf '        on "connecting to the server" when it is not.\n'
-        printf '\n'
-    fi
-    printf '  Back up your players with the recipe in %s/README.md\n' "$INSTALL_DIR"
-    printf '\n'
 }
 
 # =============================================================================
