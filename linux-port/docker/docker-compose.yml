@@ -215,6 +215,10 @@ services:
       # them to hand the address out. It cannot be inferred from the bind
       # address: a public server behind nginx also binds the panel to 127.0.0.1.
       M2_LOCAL_ONLY: "${M2_LOCAL_ONLY:-0}"
+      # Where players write when something needs adjusting. Empty means the
+      # front page leaves the line out entirely -- better than pointing your
+      # players at whatever address happened to be in the source.
+      M2_CONTACT_EMAIL: "${M2_CONTACT_EMAIL:-}"
 
       # Server rates. The panel runs M2PANEL_RATES_SCRIPT when somebody saves
       # the rates page and reads M2PANEL_RATES_STATUS back to report how it

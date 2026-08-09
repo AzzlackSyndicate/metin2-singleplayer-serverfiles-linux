@@ -45,6 +45,10 @@ M2_MAX_ITEM_COUNT="${M2_MAX_ITEM_COUNT:-255}"
 # tells the operator that nobody else can join instead of telling them to hand
 # the address out. Default "no", which is right for every server install.
 M2_LOCAL_ONLY="${M2_LOCAL_ONLY:-0}"
+# Where players should write when something needs adjusting. Empty by default:
+# no address is far better than somebody else's, and the front page simply
+# leaves the line out rather than inviting mail to a stranger.
+M2_CONTACT_EMAIL="${M2_CONTACT_EMAIL:-}"
 M2_PANEL_STATUS_PORTS="${M2_PANEL_STATUS_PORTS:-11000,13000}"
 M2_GAME_HOST="${M2_GAME_HOST:-game}"
 
@@ -158,6 +162,7 @@ else
   M2_BRAND="$M2_BRAND" M2_CLIENT_NAME="$M2_CLIENT_NAME" M2_CLIENT_URL="$M2_CLIENT_URL" \
   M2_INVENTORY_SLOTS="$M2_INVENTORY_SLOTS" M2_PANEL_STATUS_PORTS="$M2_PANEL_STATUS_PORTS" \
   M2_MAX_ITEM_COUNT="$M2_MAX_ITEM_COUNT" M2_LOCAL_ONLY="$M2_LOCAL_ONLY" \
+  M2_CONTACT_EMAIL="$M2_CONTACT_EMAIL" \
   M2_GAME_HOST="$M2_GAME_HOST" \
   CONF_PATH="$CONF_PATH" \
   python3 <<'PY'
@@ -187,6 +192,7 @@ conf = {
     "status_ports":   ports,
     "max_item_count": int(os.environ["M2_MAX_ITEM_COUNT"]),
     "local_only":     os.environ["M2_LOCAL_ONLY"] in ("1", "true", "yes", "on"),
+    "contact_email":  os.environ["M2_CONTACT_EMAIL"].strip(),
 
     # Consumed by the portability pass on server_status(): in a container the
     # game's sockets are in a different network namespace, so `sockstat' can

@@ -311,7 +311,8 @@ REQUIRED_CONF = ("flask_secret", "db_user", "db_pass", "salt", "pass_hash")
 # unless it is set, so an existing installation behaves exactly as before.
 ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash",
             "bind", "port", "brand", "client_url", "client_name",
-            "inventory_slots", "max_item_count", "status_ports", "local_only")
+            "inventory_slots", "max_item_count", "status_ports", "local_only",
+            "contact_email")
 
 def _conf_from_env():
     """The config keys the environment sets, already turned into the right type."""
@@ -665,18 +666,18 @@ T = {
 
  # --- what this project is (shown to everyone, no login needed) ---
  "about_title":  {"en":"What is this?","de":"Was ist das hier?","tr":"Bu nedir?"},
- "about_goal":   {"en":"Singleplayer Official Metin2 is exactly what the name says: the original, unchanged Metin2 — the official 2014 client — set up so you can play it on your own. At your own pace, without other players, without an item shop, and without the endless grind that only exists to sell you something.",
-                  "de":"Singleplayer Official Metin2 ist genau das, was der Name sagt: das originale, unveränderte Metin2 — der offizielle 2014er Client — so eingerichtet, dass du es für dich allein spielen kannst. In deinem eigenen Tempo, ohne andere Spieler, ohne Item-Shop und ohne den endlosen Grind, den es nur gibt, um dir etwas zu verkaufen.",
-                  "tr":"Singleplayer Official Metin2 adı üstünde: orijinal, değiştirilmemiş Metin2 — 2014 resmî istemcisi — tek başına oynayabilesin diye kurulmuş. Kendi hızında, başka oyuncu olmadan, item shop olmadan ve sadece sana bir şey satmak için var olan o bitmeyen grind olmadan."},
+ "about_goal":   {"en":"This is Metin2 as it was in 2014 — the original game, unchanged — running on a server somebody set up for themselves. No item shop, nothing to buy, and none of the grind that only exists to sell you something. You play at your own pace.",
+                  "de":"Das hier ist Metin2, wie es 2014 war — das Originalspiel, unverändert — auf einem Server, den sich jemand selbst eingerichtet hat. Kein Item-Shop, nichts zu kaufen, und nichts von dem Grind, den es nur gibt, um dir etwas zu verkaufen. Du spielst in deinem eigenen Tempo.",
+                  "tr":"Burada 2014'teki hâliyle Metin2 var — orijinal oyun, değiştirilmemiş — birinin kendisi için kurduğu bir sunucuda çalışıyor. Item shop yok, satın alınacak bir şey yok ve sadece sana bir şey satmak için var olan o grind yok. Kendi hızında oynarsın."},
  "about_hobby":  {"en":"This is a hobby project. Nobody earns anything from it, there is nothing to buy, and there never will be.",
                   "de":"Das hier ist ein Hobbyprojekt. Niemand verdient daran etwas, es gibt nichts zu kaufen, und das wird auch so bleiben.",
                   "tr":"Burası bir hobi projesi. Kimse bundan para kazanmıyor, satın alınacak bir şey yok ve olmayacak da."},
  "about_simple": {"en":"Everything is deliberately kept as simple as possible — this panel included. Plain pages, big buttons, and an explanation on almost everything: hold your mouse over a button or a field and it tells you what it does.",
                   "de":"Alles ist bewusst so einfach wie möglich gehalten — auch dieses Panel. Schlichte Seiten, große Schaltflächen und zu fast allem eine Erklärung: Halte die Maus über eine Schaltfläche oder ein Feld, dann steht dort, was sie tut.",
                   "tr":"Her şey bilerek olabildiğince basit tutuldu — bu panel de dahil. Sade sayfalar, büyük düğmeler ve neredeyse her şey için bir açıklama: farenle bir düğmenin veya alanın üzerinde bekle, ne işe yaradığını yazar."},
- "about_uptime": {"en":"The server is staying online. It is paid for and will keep running for the foreseeable future — your characters will not disappear overnight.",
-                  "de":"Der Server bleibt online. Er ist bezahlt und läuft auf absehbare Zeit weiter — deine Charaktere sind nicht über Nacht weg.",
-                  "tr":"Sunucu açık kalacak. Ücreti ödendi ve öngörülebilir gelecekte çalışmaya devam edecek — karakterlerin bir gecede kaybolmayacak."},
+ "about_uptime": {"en":"Characters live in this server's own database and nowhere else — nobody has a second copy, and nothing is sent anywhere. Which also means how long this world lasts is entirely up to whoever runs it.",
+                  "de":"Charaktere liegen in der Datenbank dieses Servers und sonst nirgends — niemand hat eine zweite Kopie, und es wird nichts irgendwohin übertragen. Das heißt aber auch: Wie lange es diese Welt gibt, entscheidet allein, wer den Server betreibt.",
+                  "tr":"Karakterler yalnızca bu sunucunun kendi veritabanında durur — kimsede ikinci bir kopya yok ve hiçbir yere bir şey gönderilmiyor. Bu aynı zamanda şu demek: bu dünyanın ne kadar süreceğine yalnızca sunucuyu işleten kişi karar verir."},
  "about_oss":    {"en":"Everything needed to run this is open source. Anyone can set up exactly the same server on their own machine with a single command — no Metin2 knowledge required.",
                   "de":"Alles, was dafür nötig ist, ist Open Source. Jeder kann sich mit einem einzigen Befehl genau denselben Server selbst aufsetzen — ganz ohne Metin2-Vorwissen.",
                   "tr":"Bunu çalıştırmak için gereken her şey açık kaynak. İsteyen herkes tek bir komutla aynı sunucuyu kendi makinesinde kurabilir — Metin2 bilgisi gerekmez."},
@@ -919,7 +920,11 @@ def inject_i18n():
             "brand": BRAND, "srv": server_status(), "rates": public_rates(),
             "dlsize": human_size(_cf["size"]) if _cf["size"] else "",
             "dlsha": _cf["sha256"],
-            "local_only": bool(CONF.get("local_only", False))}
+            "local_only": bool(CONF.get("local_only", False)),
+            # Empty unless the operator set one. It used to be a hard-coded
+            # address, which meant every server built from this project pointed
+            # its players at one particular person's inbox.
+            "contact": str(CONF.get("contact_email", "") or "").strip()}
 
 @app.route("/lang/<code>")
 def setlang(code):
@@ -1091,10 +1096,27 @@ def favicon():
     resp.headers["Cache-Control"] = "public, max-age=604800"
     return resp
 
+def local_open():
+    """True when the passphrase is pointless and therefore skipped.
+
+    A local install listens on 127.0.0.1 and nothing else: the only people who
+    can reach this page are already sitting at the machine. Asking them to
+    invent, store and re-type a passphrase to administer their own single-player
+    server is friction with nothing on the other side of it.
+
+    What it does give up, said plainly: any program running on that computer can
+    then drive the panel. On a home PC that is the same trust you already extend
+    to everything else you run there. On anything reachable by other people it
+    would be indefensible -- which is why this follows the installer's own
+    local_only flag rather than guessing from the bind address, where a public
+    server behind nginx also looks like 127.0.0.1.
+    """
+    return bool(CONF.get("local_only", False))
+
 def login_required(fn):
     @wraps(fn)
     def w(*a, **k):
-        if not session.get("auth"):
+        if not session.get("auth") and not local_open():
             return redirect(url_for("login"))
         return fn(*a, **k)
     return w
@@ -1216,7 +1238,7 @@ setInterval(function(){
 <p>{{t('about_simple')}}</p>
 <p>{{t('about_uptime')}}</p>
 <p>{{t('about_oss')}}</p>
-<p>{{t('about_contact')}} <a href="mailto:metin2@htpsoftware.com">metin2@htpsoftware.com</a>.</p>
+{% if contact %}<p>{{t('about_contact')}} <a href="mailto:{{contact}}">{{contact}}</a>.</p>{% endif %}
 </div>
 {% if client_ready or client_url %}
 <div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
@@ -1642,6 +1664,11 @@ def rates():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    # On a local install there is nothing to log in to -- see local_open().
+    # Go straight in rather than showing a passphrase box that guards a door
+    # only the person already standing in the room can open.
+    if local_open():
+        return redirect(url_for("dash"))
     ip = request.remote_addr
     if request.method == "POST":
         cnt, lock = FAILS.get(ip, [0, 0])
@@ -1806,7 +1833,7 @@ def download():
     # different hat, so it pays like one. The logged-in admin is never limited.
     rng = request.headers.get("Range", "")
     fresh = request.method == "GET" and (not rng or bool(re.match(r"\s*bytes\s*=\s*0\s*-", rng)))
-    if fresh and not session.get("auth"):
+    if fresh and not (session.get("auth") or local_open()):
         try:
             allowed, wait, scope = _dl_quota_take(request.remote_addr)
         except Exception:
