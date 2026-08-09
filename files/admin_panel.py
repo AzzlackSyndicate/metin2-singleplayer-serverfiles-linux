@@ -170,6 +170,30 @@ def _players_in_game():
     except Exception:
         return 0        # database unreachable: report nothing, never guess
 
+_ACC = {"ts": 0.0, "any": True}
+
+def accounts_exist():
+    """Is there at least one account on this server?
+
+    Drives the "you have not made an account yet" prompt on the front page. It
+    defaults to True and stays True if the database cannot be reached: a server
+    with a wobbly database should not greet everyone as a first-time visitor.
+    Cached, because it is asked on every page render and the answer only ever
+    changes once.
+    """
+    now = time.time()
+    if now - _ACC["ts"] < 15:
+        return _ACC["any"]
+    try:
+        with db() as c, c.cursor() as cur:
+            cur.execute("SELECT EXISTS(SELECT 1 FROM account.account) AS n")
+            row = cur.fetchone()
+        _ACC["any"] = bool(row["n"] if isinstance(row, dict) else row[0])
+    except Exception:
+        _ACC["any"] = True
+    _ACC["ts"] = now
+    return _ACC["any"]
+
 def server_status():
     now = time.time()
     if now - _SRV["ts"] < 30:
@@ -685,6 +709,15 @@ T = {
                   "de":"Wenn du findest, dass am Server etwas angepasst werden sollte — die Raten, die Laufgeschwindigkeit oder irgendetwas anderes — schreib an",
                   "tr":"Sunucuda bir şeyin ayarlanması gerektiğini düşünüyorsan — oranlar, hareket hızı ya da başka herhangi bir şey — şu adrese yaz:"},
  # --- local install: the game is on this machine, there is nothing to fetch ---
+ # --- first-run prompt: no account exists on this server yet ---
+ "ob_title":     {"en":"Almost ready to play","de":"Fast startklar","tr":"Oynamaya neredeyse hazır"},
+ "ob_none":      {"en":"There is no account on this server yet — yours would be the first. It takes a username and a password, nothing else.",
+                  "de":"Auf diesem Server gibt es noch kein Konto — deines wäre das erste. Es braucht einen Benutzernamen und ein Passwort, sonst nichts.",
+                  "tr":"Bu sunucuda henüz hiç hesap yok — seninki ilki olur. Bir kullanıcı adı ve bir şifre yeter, başka bir şey değil."},
+ "ob_s1":        {"en":"Create an account","de":"Konto anlegen","tr":"Hesap aç"},
+ "ob_s2":        {"en":"Get the game","de":"Spiel holen","tr":"Oyunu al"},
+ "ob_s3":        {"en":"Play","de":"Spielen","tr":"Oyna"},
+ "ob_go":        {"en":"Create the first account","de":"Erstes Konto anlegen","tr":"İlk hesabı oluştur"},
  "admin_hint_local":{"en":"This server only listens to this computer, so there is no passphrase to type.",
                   "de":"Dieser Server lauscht nur auf diesem Computer, es gibt also keine Passphrase einzugeben.",
                   "tr":"Bu sunucu yalnızca bu bilgisayarı dinliyor, bu yüzden girilecek bir parola yok."},
@@ -934,6 +967,7 @@ def inject_i18n():
             "dlsize": human_size(_cf["size"]) if _cf["size"] else "",
             "dlsha": _cf["sha256"],
             "local_only": bool(CONF.get("local_only", False)),
+            "has_accounts": accounts_exist(),
             # Empty unless the operator set one. It used to be a hard-coded
             # address, which meant every server built from this project pointed
             # its players at one particular person's inbox.
@@ -1150,9 +1184,16 @@ padding:14px 20px;background:rgba(14,12,9,.86);backdrop-filter:blur(10px);-webki
 border-bottom:1px solid var(--line)}
 .top::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
 background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:.55}
-.top h1{margin:0;font-size:19px;letter-spacing:.3px;display:flex;align-items:center;gap:9px;
+/* The gradient and the row layout live on the <a>, not on the <h1>: the title
+   is a link home, and background-clip:text only paints the element that holds
+   the text. Left on the h1 it would clip nothing and the words would come out
+   transparent. */
+.top h1{margin:0;font-size:19px;letter-spacing:.3px}
+.top h1 a{display:flex;align-items:center;gap:9px;text-decoration:none;
 background:linear-gradient(92deg,var(--gold),var(--gold2) 60%,var(--gold));
--webkit-background-clip:text;background-clip:text;color:transparent}
+-webkit-background-clip:text;background-clip:text;color:transparent;
+transition:filter .2s}
+.top h1 a:hover{filter:brightness(1.15)}
 .top h1 img{width:24px;height:24px;border-radius:5px;flex:none;
 box-shadow:0 0 8px rgba(233,182,75,.35);image-rendering:auto}
 .wrap{max-width:780px;margin:0 auto;padding:18px 16px}
@@ -1192,6 +1233,46 @@ font-size:15px;animation:rise .35s ease both;word-break:break-word}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;vertical-align:1px;margin-right:7px;background:var(--red)}
 .dot.on{background:var(--green);animation:pulse 2.2s ease-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(87,193,95,.45)}70%{box-shadow:0 0 0 9px rgba(87,193,95,0)}100%{box-shadow:0 0 0 0 rgba(87,193,95,0)}}
+
+/* ---- first-run prompt ---------------------------------------------------
+   Shown only while the server has no account at all. The point is to answer
+   "what now?" for somebody who has just installed this and is looking at a
+   page full of equally plausible buttons -- so the road is drawn as three
+   short steps with the current one lit, and the one action that matters is
+   the only thing that moves. Everything here stops under the
+   prefers-reduced-motion rule further down.                              */
+.onboard{border-color:rgba(233,182,75,.45);
+  box-shadow:0 10px 28px rgba(0,0,0,.4),0 0 0 1px rgba(233,182,75,.10),0 0 26px -6px var(--glow);
+  animation:rise .5s cubic-bezier(.22,.7,.35,1) both,breathe 4s ease-in-out 1.2s infinite}
+@keyframes breathe{0%,100%{box-shadow:0 10px 28px rgba(0,0,0,.4),0 0 0 1px rgba(233,182,75,.10),0 0 26px -6px var(--glow)}
+  50%{box-shadow:0 10px 28px rgba(0,0,0,.4),0 0 0 1px rgba(233,182,75,.22),0 0 34px -4px rgba(233,182,75,.30)}}
+
+.steps3{display:flex;align-items:flex-start;justify-content:center;gap:0;margin:14px 0 10px}
+.s3{display:flex;flex-direction:column;align-items:center;gap:5px;width:84px;flex:none}
+.s3 b{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:700;background:var(--card);border:1px solid var(--line);color:var(--muted);
+  transition:all .3s}
+.s3 i{font-style:normal;font-size:11px;line-height:1.25;color:var(--muted);transition:color .3s}
+.s3.now b{background:linear-gradient(180deg,var(--gold2),var(--gold));border-color:var(--gold);color:#2a1e08;
+  animation:steppulse 2s ease-out infinite}
+.s3.now i{color:var(--gold2);font-weight:600}
+.s3.done b{border-color:var(--green);color:var(--green)}
+.s3.done b::after{content:"✓";font-size:14px}
+.s3.done b{font-size:0}
+@keyframes steppulse{0%{box-shadow:0 0 0 0 rgba(233,182,75,.55)}70%{box-shadow:0 0 0 10px rgba(233,182,75,0)}
+  100%{box-shadow:0 0 0 0 rgba(233,182,75,0)}}
+/* the connector: a track with a highlight travelling along it, so the eye is
+   pulled from step 1 towards the rest rather than sitting still */
+.s3bar{flex:1;height:2px;background:var(--line);margin-top:13px;border-radius:2px;
+  position:relative;overflow:hidden;min-width:14px}
+.s3bar u{position:absolute;inset:0;display:block;text-decoration:none;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+  transform:translateX(-100%);animation:travel 2.4s ease-in-out .6s infinite}
+@keyframes travel{0%{transform:translateX(-100%)}55%,100%{transform:translateX(100%)}}
+
+.btn.glow{animation:btnglow 2.6s ease-in-out infinite}
+@keyframes btnglow{0%,100%{box-shadow:0 2px 10px rgba(233,182,75,.20)}
+  50%{box-shadow:0 4px 20px rgba(233,182,75,.42)}}
 .steps{margin:10px 0 4px;padding:0;list-style:none;counter-reset:s;text-align:left}
 .steps li{counter-increment:s;margin:9px 0;padding-left:36px;position:relative;font-size:14px;color:#d8d0bd}
 .steps li::before{content:counter(s);position:absolute;left:0;top:-2px;width:24px;height:24px;border-radius:50%;
@@ -1210,7 +1291,10 @@ input[title]{cursor:text}
 .about p:last-child{margin-bottom:0}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style></head><body>
-<div class="top"><h1 title="{{t('about_goal')}}"><img src="/favicon.ico" alt="">{{brand}}</h1>
+{# The title is the way home, as it is on every other site. Worth having even
+   where a logout link exists: from a player page it is one click instead of
+   two, and on a local install it is the only route back. #}
+<div class="top"><h1 title="{{t('about_goal')}}"><a href="{{url_for('login')}}"><img src="/favicon.ico" alt="">{{brand}}</a></h1>
 <div>
 <span style="font-size:13px" title="{{t('tip_lang')}}">
 {% for code, name in langs.items() %}<a href="{{url_for('setlang', code=code)}}" title="{{name}}" style="margin:0 3px;{{'font-weight:700;text-decoration:underline' if code==curlang else 'opacity:.7'}}">{{code|upper}}</a>{% endfor %}
@@ -1281,13 +1365,29 @@ setInterval(function(){
 {% if dlsha and not client_url %}<p class="muted help" title="{{t('dl_sha')}}" style="font-size:11px;word-break:break-all">SHA-256: {{dlsha}}</p>{% endif %}
 </div>
 {% endif %}
-<div class="card" style="max-width:380px;margin:0 auto 16px;text-align:center">
+<div class="card{% if not has_accounts %} onboard{% endif %}" style="max-width:380px;margin:0 auto 16px;text-align:center">
 <div style="font-size:40px">🧑‍🤝‍🧑</div>
-<h3>{{t('game_account')}}</h3>
+<h3>{% if has_accounts %}{{t('game_account')}}{% else %}{{t('ob_title')}}{% endif %}</h3>
+{% if not has_accounts %}
+{# Nobody has registered yet, so the page says so instead of showing two
+   equal-weight buttons and leaving a first-time visitor to guess. The three
+   steps are there to show how short the road is, not to decorate. #}
+<div class="steps3" aria-hidden="true">
+  <span class="s3 now"><b>1</b><i>{{t('ob_s1')}}</i></span>
+  <span class="s3bar"><u></u></span>
+  <span class="s3 {% if client_ready or local_only %}done{% endif %}"><b>2</b><i>{{t('ob_s2')}}</i></span>
+  <span class="s3bar"></span>
+  <span class="s3"><b>3</b><i>{{t('ob_s3')}}</i></span>
+</div>
+<p class="muted" style="margin:2px 0 12px">{{t('ob_none')}}</p>
+<a class="btn big glow" href="{{url_for('register')}}" title="{{t('tip_create_acc')}}">✨ {{t('ob_go')}}</a>
+{% else %}
 <div class="row">
 <a class="btn" href="{{url_for('register')}}" title="{{t('tip_create_acc')}}">{{t('create_acc')}}</a>
 <a class="btn" href="{{url_for('account')}}" title="{{t('tip_my_acc')}}">{{t('my_acc')}}</a>
-</div></div>
+</div>
+{% endif %}
+</div>
 <div class="card" style="max-width:380px;margin:0 auto;text-align:center">
 <div style="font-size:40px">{% if local_only %}🛠️{% else %}🔑{% endif %}</div>
 <h3>{{t('welcome')}}</h3>
@@ -2034,8 +2134,22 @@ def dash():
         now = datetime.datetime.now()
         for p in players:
             lp = p.get("last_play")
+            # A character who has never played carries MySQL's zero date,
+            # '0000-00-00 00:00:00'. There is no such moment, so the driver
+            # cannot build a datetime out of it and hands back the raw string
+            # instead -- and subtracting a string from a datetime raised
+            # TypeError, which this function's own except clause then reported
+            # as "the database cannot be reached". A brand-new server, where
+            # somebody has registered but not yet logged in, showed a database
+            # error on every visit and sent people looking in the wrong place.
+            if not isinstance(lp, datetime.datetime):
+                lp = None
             p["active"] = bool(lp) and abs((now - lp).total_seconds()) < 600
     except Exception:
+        # Log it. Everything here is reported to the visitor as "database
+        # unreachable", which is a guess -- and when the guess is wrong it
+        # costs an hour of looking at a database that was never broken.
+        app.logger.exception("dashboard query failed")
         flash(t("db_down"), "error")
         players = []
     return render_template_string(TPL_DASH, players=players,
