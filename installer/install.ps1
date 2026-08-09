@@ -1494,8 +1494,15 @@ function Start-ClientBuild {
                    Where-Object { $_ -like '/srccache/*' } |
                    Select-Object -First 1)
         if ($probe.Code -eq 0 -and $cached) {
-            $reuseArgs = @('-v', "$($script:SrcVolume):/srccache:ro",
-                           '-e', "M2_CLIENT_ARCHIVE=$cached")
+            # The volume name is safe on a command line; the FILE NAME is not.
+            # The archive is published as "[40250] Reference Serverfile-....zip"
+            # and Start-Process joins ArgumentList with spaces without quoting
+            # anything, so passing it as -e M2_CLIENT_ARCHIVE=<path> tore the
+            # value in half and docker read the remainder as a service name
+            # ("no such service: Reference"). The compose file already reads
+            # this variable from the environment, which has no such problem.
+            $reuseArgs = @('-v', "$($script:SrcVolume):/srccache:ro")
+            $env:M2_CLIENT_ARCHIVE = $cached
         }
     } catch {
         # Not being able to look is not a reason to fail -- it just downloads.
@@ -1549,6 +1556,19 @@ function Start-ClientBuild {
     while ((Get-Date) -lt $deadline) {
         if ($proc.HasExited) {
             Write-Host ''
+            # Fold stderr into the log before anyone is told where to look.
+            # Start-Process cannot send both streams to one file, and docker
+            # writes the interesting part -- the reason it refused to start --
+            # to stderr. Pointing someone at a log that is empty precisely when
+            # something went wrong is worse than not mentioning a log at all.
+            if ((Test-Path -LiteralPath $errFile) -and
+                ((Get-Item -LiteralPath $errFile).Length -gt 0)) {
+                Add-Content -LiteralPath $script:ClientLog -Value ''
+                Add-Content -LiteralPath $script:ClientLog -Value '--- error output ---'
+                Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue |
+                    Add-Content -LiteralPath $script:ClientLog
+                Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+            }
             if (Test-ClientZipPresent) {
                 Write-Good 'The client is built and in place -- that was quick.'
                 $script:ClientState = 'ready'
