@@ -1112,6 +1112,48 @@ is well inside that:
 "@
 }
 
+# The version this machine is running, out of the build context the panel image
+# was made from. Empty when it cannot be told, which is not an error: every
+# server installed before versions existed has no such file, and right now
+# those outnumber the ones that do.
+function Get-InstalledVersion {
+    $f = Join-Path $script:InstallDir 'panel\app\VERSION'
+    if (Test-Path -LiteralPath $f) {
+        $v = (Get-Content -LiteralPath $f -First 1 -ErrorAction SilentlyContinue)
+        if ($v) { return $v.Trim() }
+    }
+    return ''
+}
+
+# The version published in the repository. Empty when it cannot be fetched --
+# no network, GitHub unreachable, a proxy in the way. Never a reason to stop.
+function Get-PublishedVersion {
+    $url = if ($env:M2_VERSION_URL) { $env:M2_VERSION_URL }
+           else { $script:SelfUrl -replace '/installer/install\.ps1$', '/VERSION' }
+    try {
+        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 12 -ErrorAction Stop
+        $v = ($r.Content -split "`n")[0].Trim()
+        if ($v -match '^\d{1,5}\.\d{1,5}\.\d{1,5}$') { return $v }
+    } catch { }
+    return ''
+}
+
+# a.b.c > x.y.z ? Compared number by number, not as text -- 1.1.10 is newer
+# than 1.1.9, and a string comparison gets that backwards.
+function Test-VersionNewer([string]$a, [string]$b) {
+    if (-not $a) { return $false }
+    if (-not $b) { return $true }
+    $x = $a -split '\.'; $y = $b -split '\.'
+    for ($i = 0; $i -lt 3; $i++) {
+        $p = 0; $q = 0
+        [void][int]::TryParse($x[$i], [ref]$p)
+        [void][int]::TryParse($y[$i], [ref]$q)
+        if ($p -gt $q) { return $true }
+        if ($p -lt $q) { return $false }
+    }
+    return $false
+}
+
 function Get-Stack {
     Write-Step 'The server files'
 
@@ -1122,16 +1164,55 @@ function Get-Stack {
         Write-Say 'Nothing here will be deleted. Your accounts, characters, items'
         Write-Say 'and guilds live in a Docker volume that this installer never'
         Write-Say 'touches -- only "docker compose down -v" would remove them, and'
-        Write-Say 'this script never runs that.'
+        Write-Say 'this script never runs that. Your settings in .env are kept'
+        Write-Say 'either way.'
         Write-Say ''
-        if (-not (Confirm-YesNo 'Continue, updating the settings and restarting the server?' $true)) {
+
+        $have = Get-InstalledVersion
+        $new  = Get-PublishedVersion
+        if ($have) { Write-Say "  This server:   $have" }
+        else       { Write-Say '  This server:   unknown -- installed before versions were added' }
+        if ($new)  { Write-Say "  Published:     $new" }
+        else       { Write-Say '  Published:     could not be checked just now' }
+        Write-Say ''
+
+        # Offer the update when the published version is genuinely newer, and
+        # also when the local one cannot be read -- an install with no VERSION
+        # predates them, so anything published is newer than it.
+        $outdated = $false
+        if ($new -and ((-not $have) -or (Test-VersionNewer $new $have))) { $outdated = $true }
+
+        if ($outdated) {
+            Write-Say 'Updating rebuilds the server from the published version and'
+            Write-Say 'restarts it. Answering no re-applies your settings and'
+            Write-Say 'restarts, and leaves the version you have alone.'
             Write-Say ''
-            Write-Say 'Left alone. To manage the existing server:'
-            Write-Say "    cd `"$($script:InstallDir)`""
-            Write-Say '    docker compose ps'
-            throw (New-Object System.OperationCanceledException 'user declined')
+            if (Confirm-YesNo "Update this server to $new?" $true) {
+                Write-Say ''
+                Write-Say "Updating to $new."
+                # Falls through on purpose. This used to return here, so
+                # re-running the installer rewrote .env, restarted the
+                # containers and changed nothing else: the checkout was never
+                # refreshed and the build context was never replaced, so the
+                # rebuild had nothing new to build. On Windows that was the
+                # whole update mechanism, since there is no updater service.
+            } else {
+                Write-Say ''
+                Write-Say 'Keeping the version you have.'
+                return
+            }
+        } else {
+            if ($new -and $have) { Write-Say 'That is the newest published version.' }
+            Write-Say ''
+            if (-not (Confirm-YesNo 'Re-apply the settings and restart the server?' $true)) {
+                Write-Say ''
+                Write-Say 'Left alone. To manage the existing server:'
+                Write-Say "    cd `"$($script:InstallDir)`""
+                Write-Say '    docker compose ps'
+                throw (New-Object System.OperationCanceledException 'user declined')
+            }
+            return
         }
-        return
     }
 
     Test-InstallPathLength

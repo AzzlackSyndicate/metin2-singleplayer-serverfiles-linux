@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.1.4 — 2026-08-10
+
+### Fixed
+
+- The Windows installer now updates an existing server as well, and shows the
+  installed and published versions before asking. Re-running it previously
+  re-applied the settings and restarted without fetching anything.
+
+---
+
 ## 1.1.3 — 2026-08-10
 
 ### Changed
