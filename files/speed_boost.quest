@@ -1,0 +1,48 @@
+-- =============================================================
+-- Serverwide movement-speed boost.
+--
+-- Every character gets +20% running speed the moment they log in.
+-- No item, no button, nothing to know about - it is simply how
+-- fast people run on this server.
+--
+-- To change the boost, edit `want` below, recompile (./qc
+-- speed_boost.quest in the quest folder) and restart the game.
+-- The quest notices the changed number and swaps the old affect
+-- for the new one at each character's next login - no cleanup
+-- needed.
+--
+-- How it avoids the classic pitfalls:
+--   * affect.add() in this source DOES stack duplicates (its
+--     internal guard compares an APPLY_* constant against a
+--     stored POINT_* constant, which never matches), so the
+--     quest only ever adds when affect.get_apply_on(1000) says
+--     no quest affect exists yet.  1000 = AFFECT_QUEST_START_IDX.
+--   * The affect persists in the database, so it survives
+--     logouts; the 10-year duration only counts down while the
+--     player is online - effectively permanent.
+--   * The panel's own speed command (web_admin.quest) uses
+--     affect.add_collect, a different affect type, so the two
+--     never touch each other.
+--
+-- This file assumes it is the only quest using plain affect.add
+-- on this server. If you add another one, key it differently.
+-- =============================================================
+quest speed_boost begin
+	state start begin
+		when login begin
+			local want = 20
+			local mov = 8 -- APPLY_MOV_SPEED; apply.MOV_SPEED where the locale defines it
+			if apply ~= nil and apply.MOV_SPEED ~= nil then
+				mov = apply.MOV_SPEED
+			end
+			if pc.getqf("applied") ~= want then
+				affect.remove(1000)
+				pc.setqf("applied", 0)
+			end
+			if affect.get_apply_on(1000) == nil then
+				affect.add(mov, want, 60*60*24*365*10)
+				pc.setqf("applied", want)
+			end
+		end
+	end
+end

@@ -1,0 +1,339 @@
+# =============================================================================
+#  Metin2 r40250 -- full server stack.
+#
+#      docker compose up -d
+#
+#  Three services:
+#
+#    db      MariaDB 10.11, with the sql_mode and latin1 charset the server
+#            requires, and a one-shot import of the shipped dumps.
+#    game    every game core (db core, auth, and 3 cores per channel) in one
+#            container, supervised in the required boot order.
+#    panel   the admin panel, the only public HTTP surface.
+#
+#  Why the game cores share a container: they are not independent services.
+#  The db core listens on loopback only and every other core dials
+#  127.0.0.1:15000 during boot; each core must run with its CWD set to its own
+#  directory; and they reach the binaries and the 115 MB data tree through
+#  symlinks into one shared layout. Splitting them would mean five containers
+#  sharing one writable volume plus an external orchestrator to sequence them,
+#  for no isolation benefit -- they already trust each other completely.
+# =============================================================================
+
+name: metin2
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # The database. Named `mariadb' rather than `db' because the game has its own
+  # component called the "db core", and confusing the two costs an afternoon.
+  # ---------------------------------------------------------------------------
+  mariadb:
+    image: mariadb:10.11
+    container_name: metin2-db
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+    environment:
+      MARIADB_ROOT_PASSWORD: "${M2_DB_ROOT_PASSWORD:?set M2_DB_ROOT_PASSWORD in .env}"
+      M2_DB_USER: "${M2_DB_USER:-metin2}"
+      M2_DB_PASSWORD: "${M2_DB_PASSWORD:?set M2_DB_PASSWORD in .env}"
+      TZ: "${M2_TZ:-UTC}"
+
+    volumes:
+      # The only irreplaceable thing in this stack. Every account, character,
+      # item, guild and safebox lives here -- there is no player data on disk
+      # anywhere else. Back this up.
+      - db-data:/var/lib/mysql
+
+      # sql_mode + latin1. Mounted rather than baked so it is visible and
+      # editable without rebuilding anything.
+      - ./mariadb/conf.d:/etc/mysql/conf.d:ro
+
+      # Runs once, when db-data is empty, and never again.
+      - ./mariadb/initdb.d:/docker-entrypoint-initdb.d:ro
+
+    # Deliberately NOT published to the host. Nothing outside this compose
+    # network has any business reaching the database. To inspect it, use
+    #     docker compose exec mariadb mariadb -uroot -p
+    expose:
+      - "3306"
+
+    healthcheck:
+      # healthcheck.sh ships with the mariadb image. --connect proves the
+      # server accepts connections, not merely that the process exists --
+      # during the first-run import it is up but not yet usable, and the game
+      # must not start into that window.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+    networks: [backend]
+
+  # ---------------------------------------------------------------------------
+  # The game cores.
+  # ---------------------------------------------------------------------------
+  game:
+    build:
+      context: ./game
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: "${M2_BASE_IMAGE:-ubuntu:24.04}"
+        MAKE_JOBS: "${M2_MAKE_JOBS:-}"
+        STRIP_BINARIES: "${M2_STRIP_BINARIES:-1}"
+    image: metin2/game:40250
+    container_name: metin2-game
+    restart: unless-stopped
+
+    # The cores flush players to the db core on shutdown, and the db core then
+    # flushes to MariaDB. Cutting that short loses whatever was not saved by
+    # the last 180-second autosave.
+    stop_grace_period: 90s
+
+    # PID 1 becomes docker-init (tini), which reaps zombies and forwards
+    # signals, so the supervisor does not have to be a real init.
+    init: true
+
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+    environment:
+      M2_DB_HOST: mariadb
+      M2_DB_PORT: "3306"
+      M2_DB_USER: "${M2_DB_USER:-metin2}"
+      M2_DB_PASSWORD: "${M2_DB_PASSWORD:?set M2_DB_PASSWORD in .env}"
+
+      # The address players type into the client. Everything else about the
+      # networking works without it; this is the one that must be right.
+      M2_PUBLIC_ADDRESS: "${M2_PUBLIC_ADDRESS:-}"
+      M2_BIND_IP: "${M2_BIND_IP:-0.0.0.0}"
+
+      M2_CHANNELS: "${M2_CHANNELS:-1}"
+      M2_MAX_LEVEL: "${M2_MAX_LEVEL:-105}"
+      M2_TEST_SERVER: "${M2_TEST_SERVER:-0}"
+      M2_MALL_URL: "${M2_MALL_URL:-}"
+      M2_LOG_KEEP_DAYS: "${M2_LOG_KEEP_DAYS:-3}"
+      M2_TABLE_POSTFIX: "${M2_TABLE_POSTFIX:-}"
+      M2_ADMINPAGE_PASSWORD: "${M2_ADMINPAGE_PASSWORD:-}"
+      M2_CORE_DUMPS: "${M2_CORE_DUMPS:-0}"
+
+      TZ: "${M2_TZ:-UTC}"
+
+    ports:
+      # auth -- the login server. Every client contacts this first.
+      - "${M2_AUTH_PORT:-11000}:11000/tcp"
+      # The channel cores. A range because channel N occupies 13000+10*(N-1)
+      # through +2; raise it when you raise M2_CHANNELS (see .env.example).
+      - "${M2_GAME_PORT_RANGE:-13000-13002}:${M2_GAME_PORT_RANGE:-13000-13002}/tcp"
+      #
+      # NOT published, and must never be:
+      #   12000, 14000-14002   p2p between cores
+      #   15000                the db core -- it speaks an unauthenticated
+      #                        protocol; anyone who can reach it can rewrite
+      #                        any character on the server.
+      # They are not listed here at all, so Docker never opens them.
+
+    volumes:
+      # Everything the cores write: guild marks (the only player-created
+      # content outside MariaDB), logs, core dumps, and the rendered CONFIGs.
+      - game-var:/opt/metin2/var
+
+      # The rate spool -- the only thing the panel and the game share.
+      #
+      # The panel's "Server rates" page has to rewrite this container's data
+      # tables and restart these cores, and it lives in another container, so
+      # it cannot do either. Instead it drops a request in here and the
+      # supervisor in this container carries it out and writes the answer back.
+      #
+      # A directory rather than a Docker socket or an SSH key between the
+      # containers: those would hand the public-facing web application the
+      # ability to run anything anywhere, to change one number in a text file.
+      - rates-spool:/opt/m2spool
+
+    ulimits:
+      # game calls fdwatch_new(4096); descriptor numbers must stay under that,
+      # so the process needs at least that many available.
+      nofile:
+        soft: 16384
+        hard: 16384
+
+    networks: [backend]
+
+  # ---------------------------------------------------------------------------
+  # The admin panel.
+  # ---------------------------------------------------------------------------
+  panel:
+    build:
+      context: ./panel
+      dockerfile: Dockerfile
+    image: metin2/panel:latest
+    container_name: metin2-panel
+    restart: unless-stopped
+
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+    environment:
+      M2_DB_HOST: mariadb
+      M2_DB_PORT: "3306"
+      M2_DB_USER: "${M2_DB_USER:-metin2}"
+      M2_DB_PASSWORD: "${M2_DB_PASSWORD:?set M2_DB_PASSWORD in .env}"
+
+      # Blank on first run means "generate one and print it once".
+      M2_PANEL_PASSWORD: "${M2_PANEL_PASSWORD:-}"
+      M2_PANEL_PORT: "7788"
+      M2_PANEL_BIND: "0.0.0.0"
+
+      # So the panel can answer "is the game up" by probing the game container
+      # rather than by reading its own socket table, which in a container shows
+      # nothing about the game at all.
+      M2_GAME_HOST: game
+      M2_PANEL_STATUS_PORTS: "${M2_PANEL_STATUS_PORTS:-11000,13000}"
+
+      M2_BRAND: "${M2_BRAND:-}"
+      M2_CLIENT_NAME: "${M2_CLIENT_NAME:-}"
+      M2_CLIENT_URL: "${M2_CLIENT_URL:-}"
+      # 180, not 45: r40250 gives a character four inventory pages. At 45 the
+      # panel only looks at the first page and refuses to give an item to
+      # anyone whose first page is full.
+      M2_INVENTORY_SLOTS: "${M2_INVENTORY_SLOTS:-180}"
+      # player.item.count is TINYINT UNSIGNED. Without this the panel allows
+      # 65535 and MySQL truncates in silence -- 1000 potions become 255.
+      M2_MAX_ITEM_COUNT: "${M2_MAX_ITEM_COUNT:-255}"
+
+      # Server rates. The panel runs M2PANEL_RATES_SCRIPT when somebody saves
+      # the rates page and reads M2PANEL_RATES_STATUS back to report how it
+      # went -- the same two settings it uses on FreeBSD, pointed at the
+      # container versions. The script here only writes a request into the
+      # spool the game container is watching; see panel/bin/apply_rates.sh.
+      #
+      # The script deliberately does NOT live on the panel-data volume: an
+      # existing stack keeps its volume across an upgrade, so a file shipped
+      # there in a new image would never appear.
+      M2PANEL_RATES_SCRIPT: "/usr/local/bin/apply_rates.sh"
+      M2PANEL_RATES_STATUS: "/opt/m2spool/rates.status"
+      M2PANEL_RATES_SPOOL: "/opt/m2spool"
+
+      TZ: "${M2_TZ:-UTC}"
+
+    ports:
+      - "${M2_PANEL_PUBLIC_PORT:-7788}:7788/tcp"
+
+    volumes:
+      # m2panel.conf: the admin password hash, per-install salt and Flask
+      # session secret. Generated on first run and then never regenerated --
+      # losing it logs everyone out and forgets the password.
+      - panel-conf:/usr/local/etc
+      # client.zip (the game client offered to players) and downloads.db (the
+      # per-IP download quota). client.zip is ~1.2 GB and is uploaded by the
+      # operator, not shipped in the image.
+      - panel-data:/usr/local/m2panel
+      # The other end of the rate spool. Same volume, same path as in the game
+      # container, so a request written here is the file read over there.
+      - rates-spool:/opt/m2spool
+
+    networks: [backend]
+
+  # ---------------------------------------------------------------------------
+  # The game client players download.
+  #
+  # A one-shot tool, not a service. It has a profile, so `docker compose up'
+  # never starts it; it is run on purpose:
+  #
+  #     docker compose run --rm client-builder
+  #
+  # It fetches the server-file archive (a MEGA share link, over a gigabyte),
+  # writes M2_PUBLIC_ADDRESS into the client inside it, and puts the result on
+  # the panel's data volume, which is what makes the panel's "Download the game"
+  # button work.
+  #
+  # It is safe to run again. The download and the built client stay in their own
+  # cache volume, so changing the address afterwards rewrites one file inside an
+  # existing zip and copies it across -- seconds, and nothing is downloaded.
+  # ---------------------------------------------------------------------------
+  client-builder:
+    build:
+      context: ./client-builder
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: "${M2_BASE_IMAGE:-ubuntu:24.04}"
+    image: metin2/client-builder:latest
+    profiles: ["client"]
+    restart: "no"
+    init: true
+
+    environment:
+      # The address baked into the client. Defaults to the one the server
+      # advertises, which is what you want on a VPS; on a local install both are
+      # 127.0.0.1. Set M2_CLIENT_ADDRESS only when they must differ.
+      M2_CLIENT_ADDRESS: "${M2_CLIENT_ADDRESS:-${M2_PUBLIC_ADDRESS:-}}"
+
+      # The server list the client shows must match the server that is running,
+      # so these follow the game's own settings by default. A channel listed but
+      # not running looks to a player exactly like a broken server.
+      M2_CLIENT_CHANNELS: "${M2_CLIENT_CHANNELS:-${M2_CHANNELS:-1}}"
+      M2_CLIENT_AUTH_PORT: "${M2_CLIENT_AUTH_PORT:-${M2_AUTH_PORT:-11000}}"
+      M2_CLIENT_SERVER_NAME: "${M2_CLIENT_SERVER_NAME:-}"
+
+      # Where to get the archive, and what to do when that link stops working.
+      # Empty means "the link these server files ship with".
+      M2_CLIENT_ARCHIVE_URL: "${M2_CLIENT_ARCHIVE_URL:-}"
+      M2_CLIENT_ARCHIVE: "${M2_CLIENT_ARCHIVE:-}"
+      M2_CLIENT_ARCHIVE_SHA256: "${M2_CLIENT_ARCHIVE_SHA256:-}"
+
+      M2_CLIENT_FORCE: "${M2_CLIENT_FORCE:-}"
+      M2_CLIENT_KEEP_ARCHIVE: "${M2_CLIENT_KEEP_ARCHIVE:-1}"
+      M2_CLIENT_VERIFY: "${M2_CLIENT_VERIFY:-quick}"
+      M2_CLIENT_MIN_FREE_MB: "${M2_CLIENT_MIN_FREE_MB:-7000}"
+
+      TZ: "${M2_TZ:-UTC}"
+
+    volumes:
+      # The panel's own volume, mounted at /out. The finished client is written
+      # under a dotted name and renamed into place at the very end, so until the
+      # build has completely finished the panel sees no client.zip and keeps
+      # telling players the download is not ready -- which is the truth.
+      - panel-data:/out
+
+      # The cache: the downloaded archive and the built client. Separate from
+      # the panel's volume on purpose -- nothing half-finished ever appears
+      # where the panel would serve it, and `docker compose down -v' does not
+      # cost a fresh gigabyte-and-a-half download unless you meant it to.
+      - client-cache:/var/cache/m2client
+
+      # Somewhere to hand the tool a file yourself. Put the server-file archive
+      # (or a ready-made Client.zip) in ./client-archive next to this file and
+      # it is used instead of downloading anything. This is the way out on the
+      # day the MEGA link dies.
+      - ./client-archive:/archive:ro
+
+    # No network dependency on anything in the stack: it talks to MEGA and to
+    # two volumes. It can be run before the server is even up.
+    networks: [backend]
+
+# =============================================================================
+volumes:
+  # Named volumes, not bind mounts: they survive `docker compose down', are
+  # not affected by file ownership on the host, and `docker compose down -v'
+  # is then the single explicit "destroy everything" command.
+  db-data:
+  game-var:
+  panel-conf:
+  panel-data:
+  # Tiny, and holds nothing that cannot be recreated: one request file and one
+  # status file. It is a volume rather than a bind mount only so that the two
+  # containers can share it without anything on the host having to exist.
+  rates-spool:
+  # The downloaded server-file archive and the built client -- roughly 3 GB.
+  # Everything in it can be fetched again, but fetching it again means another
+  # 1.4 GB over somebody else's MEGA share, so it is worth keeping. Only
+  # client-builder mounts it, and only when you run it.
+  client-cache:
+
+networks:
+  backend:
+    driver: bridge

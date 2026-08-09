@@ -1,0 +1,31 @@
+# =============================================================================
+#  MariaDB settings the r40250 server requires.
+#
+#  Neither line is a preference.  Both are load-bearing.
+# =============================================================================
+[mysqld]
+
+# r40250 writes values that modern strict mode rejects outright: zero dates
+# ('0000-00-00'), out-of-range integers, and '' into enum columns.  With
+# MariaDB's default STRICT_TRANS_TABLES those writes become errors, and the db
+# core -- which is compiled without -DNDEBUG, so its assert()s are live --
+# aborts rather than warns.  The my.cnf shipped inside metin2_mysql_dump.zip
+# asks for exactly this value.
+sql_mode = NO_ENGINE_SUBSTITUTION
+
+# The dumps and every string the server sends are latin1.  On a utf8mb4 server
+# the import "succeeds" and every non-ASCII character in an item or mob name is
+# silently mangled -- which then shows up as garbled text in the client, long
+# after the point where anyone would connect it to a charset setting.
+character-set-server = latin1
+collation-server     = latin1_swedish_ci
+
+# The game cores hold several long-lived connections each and the panel adds a
+# handful; the default 151 is enough, but a 4-channel server plus a busy panel
+# is close enough to it to be worth raising.
+max_connections = 200
+
+# 128 sequential 'Data truncated' warnings on player.mob_proto.size and
+# player.skill_proto.setAffectFlag{,2} during the first-run import are EXPECTED
+# and harmless: the dump itself stores '' in those enum columns, so a faithful
+# import must reproduce it.

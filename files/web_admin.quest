@@ -1,0 +1,246 @@
+-- =============================================================
+-- web_admin.quest  -  applies the admin panel's commands in game
+--
+-- NOTHING IN THIS REPOSITORY INSTALLS THIS FILE. The Docker stack
+-- has no step that copies a quest into the game image or compiles
+-- one, so on a Docker deployment the panel's Teleport and Running
+-- speed buttons do not work. See ADD_SQL_BINDING.md section 0.
+--
+-- To install it by hand, on TMP4 r40250:
+--     cd share/locale/<lang>/quest && python2.7 make.py
+-- Other server files put the quest tree elsewhere -- look for make.py.
+--
+-- ------------------------------------------------------------------
+-- WHAT THIS NEEDS TO WORK
+-- ------------------------------------------------------------------
+-- It reads the panel's command table with mysql_direct_query(). Stock
+-- Metin2 sources do NOT give quests any way to reach MySQL, so that
+-- function has to be added to the game core first — see
+-- ADD_SQL_BINDING.md next to this file. The Linux port does not
+-- contain that change either, so on Docker both pieces are missing.
+--
+-- Without it the panel still works: items, yang and levels are written
+-- straight into the database instead. Only teleport and running speed
+-- genuinely need this quest.
+--
+-- ------------------------------------------------------------------
+-- RULES THE QUEST COMPILER ENFORCES (learned the hard way)
+-- ------------------------------------------------------------------
+-- qc checks every called name against share/.../quest/quest_functions
+-- and refuses anything that is not listed. That means:
+--   * no helper functions of our own  -> everything is written inline
+--   * no calling a function through a variable (local f = x; f())
+--   * no sys_err() — it is not on the list
+--   * mysql_direct_query must be added to quest_functions by hand,
+--     or qc refuses this file outright
+-- Please keep it that way; the failure message ("Calls undeclared
+-- function!") does not say which rule you broke.
+--
+-- ------------------------------------------------------------------
+-- A note for anyone editing this later
+-- ------------------------------------------------------------------
+-- Inside a server timer there is NO current player until pc.select().
+-- Do NOT use syschat(), notice() or chat() before that point — those
+-- read the current player without checking for NULL and will crash the
+-- core. notice_all() is safe, which is why it is the only one used.
+-- =============================================================
+
+quest web_admin begin
+	state start begin
+		when login begin
+			-- Arm the poll timer once per running core. __wa_armed is a Lua
+			-- global: it lives as long as the core does and is gone after a
+			-- restart, so the next login re-arms it.
+			--
+			-- Every core arms its own timer on purpose. find_pc_by_name()
+			-- only sees players on THIS core, so a single shared timer would
+			-- silently fail for everybody on another channel. Doing the work
+			-- twice is prevented by the claim step below, not by who polls.
+			if __wa_armed == nil then
+				__wa_armed = true
+				server_loop_timer("wa_tick", 5, pc.get_map_index())
+			end
+		end
+
+		when wa_tick.server_timer begin
+			-- Nothing to do if we already know this core cannot reach MySQL.
+			if __wa_no_sql == true then
+				return
+			end
+
+			-- Reading a global that was never defined gives nil in Lua rather
+			-- than an error, so this is a safe way to ask "was the core
+			-- patched?". Say so once, then stay quiet forever.
+			if mysql_direct_query == nil then
+				__wa_no_sql = true
+				notice_all("[WEB PANEL] The in-game helper is inactive: this core has no database function for quests. See ADD_SQL_BINDING.md — items, yang and levels still work through the panel.")
+				return
+			end
+
+			-- A stamp no other core will use, so two cores can never work on
+			-- the same row: channel id + a per-process random + a tick count.
+			-- Stays well inside the status column's 24 characters.
+			if __wa_salt == nil then
+				__wa_salt = number(100, 999)
+			end
+			if __wa_tick == nil then
+				__wa_tick = 0
+			end
+			__wa_tick = __wa_tick + 1
+			if __wa_tick > 9999 then
+				__wa_tick = 1
+			end
+			local wa_chan = 0
+			if get_channel_id ~= nil then
+				wa_chan = tonumber(get_channel_id()) or 0
+			end
+			if wa_chan < 0 or wa_chan > 99 then
+				wa_chan = 99
+			end
+			local wa_token = "w" .. wa_chan .. "x" .. __wa_salt .. "t" .. __wa_tick
+
+			-- Look at what is waiting. We do NOT claim anything yet: a row is
+			-- only ours if the player is actually on this core.
+			local rows = mysql_direct_query("SELECT id, player_name, cmd, arg1, arg2, COALESCE(TIMESTAMPDIFF(SECOND, created, NOW()), 999) AS age FROM player.web_admin_queue WHERE status='pending' ORDER BY id ASC LIMIT 5")
+			if type(rows) ~= "table" then
+				return
+			end
+			local count = table.getn(rows)
+			if count == 0 then
+				return
+			end
+
+			local i
+			for i = 1, count do
+				local r = rows[i]
+				if type(r) == "table" then
+					-- qid is pasted into SQL, so it MUST be a number. tonumber()
+					-- gives nil for anything else and we skip the row — that is
+					-- the protection against injection through this table.
+					local qid = tonumber(r.id)
+					if qid ~= nil then
+						local name = r.player_name
+						local cmd = r.cmd
+						local arg1 = r.arg1
+						local arg2 = r.arg2
+						local age = tonumber(r.age) or 0
+
+						local vid = 0
+						if name ~= nil then
+							vid = find_pc_by_name(name)
+						end
+
+						-- Take the row if we can really serve it, or if it has
+						-- been sitting there for half a minute. The 30 seconds
+						-- are safely longer than the few the panel waits, so we
+						-- never race it.
+						local mine = false
+						if vid ~= 0 then
+							mine = true
+						end
+						if age >= 30 then
+							mine = true
+						end
+
+						if mine == true then
+							-- Stamp it. "AND status='pending'" makes this atomic:
+							-- exactly one core wins, everyone else changes 0 rows.
+							-- The panel gives up the same way, so panel and quest
+							-- can never both act on one row.
+							mysql_direct_query("UPDATE player.web_admin_queue SET status='" .. wa_token .. "' WHERE id=" .. qid .. " AND status='pending' LIMIT 1")
+
+							-- Did we win? Ask, rather than trusting a row count
+							-- that not every binding reports.
+							local check = mysql_direct_query("SELECT id FROM player.web_admin_queue WHERE id=" .. qid .. " AND status='" .. wa_token .. "' LIMIT 1")
+							local won = false
+							if type(check) == "table" then
+								if table.getn(check) > 0 then
+									won = true
+								end
+							end
+
+							if won == true then
+								local result = "done"
+								if vid == 0 then
+									result = "player_offline"
+								else
+									-- pc.select makes this player current for the
+									-- pc.* calls and hands back whoever was current
+									-- before, so we can put things back.
+									local old = pc.select(vid)
+
+									if cmd == "ITEM" then
+										local vnum = tonumber(arg1)
+										local qty = tonumber(arg2) or 1
+										if vnum == nil then
+											result = "bad_args"
+										else
+											pc.give_item2(vnum, qty)
+										end
+									elseif cmd == "GOLD" then
+										local amount = tonumber(arg1)
+										if amount == nil then
+											result = "bad_args"
+										else
+											pc.change_money(amount)
+										end
+									elseif cmd == "LEVEL" then
+										local lv = tonumber(arg1)
+										if lv == nil then
+											result = "bad_args"
+										else
+											pc.set_level(lv)
+										end
+									elseif cmd == "WARP" then
+										local x = tonumber(arg1)
+										local y = tonumber(arg2)
+										if x == nil or y == nil then
+											result = "bad_args"
+										else
+											pc.warp(x, y)
+										end
+									elseif cmd == "SPEED" then
+										-- +arg1% movement for arg2 seconds.
+										-- apply.MOV_SPEED is 8; fall back to the
+										-- number if that table is ever missing.
+										local bonus = tonumber(arg1)
+										local secs = tonumber(arg2) or 3600
+										local mov = 8
+										if type(apply) == "table" then
+											if apply.MOV_SPEED ~= nil then
+												mov = apply.MOV_SPEED
+											end
+										end
+										if bonus == nil then
+											result = "bad_args"
+										else
+											affect.add_collect(mov, bonus, secs)
+										end
+									else
+										result = "unknown_cmd"
+									end
+
+									pc.select(old)
+								end
+
+								-- Only words from our own short list may reach the
+								-- database. Nothing a user typed can get in here.
+								if result ~= "done" then
+									if result ~= "player_offline" then
+										if result ~= "bad_args" then
+											result = "unknown_cmd"
+										end
+									end
+								end
+
+								-- Release the row. "AND status=<our stamp>" makes
+								-- sure we only ever overwrite the row we own.
+								mysql_direct_query("UPDATE player.web_admin_queue SET status='" .. result .. "' WHERE id=" .. qid .. " AND status='" .. wa_token .. "' LIMIT 1")
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end

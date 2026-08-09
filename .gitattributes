@@ -1,0 +1,24 @@
+# Line endings are not cosmetic in this repository.
+#
+# Almost everything here is a shell script that runs on Linux or inside a
+# container. Git for Windows checks files out as CRLF by default, and a shell
+# script with CRLF endings fails as:
+#
+#     /bin/sh^M: bad interpreter: No such file or directory
+#
+# which tells the reader nothing useful. Worse, `.env` files and the Docker
+# entrypoints would carry stray carriage returns into container environments,
+# where they turn a password into "secret\r" and the database refuses the login.
+#
+# So: normalise to LF on commit AND on checkout, on every platform.
+* text=auto eol=lf
+
+# The port patch must survive byte for byte -- `patch` counts characters, and a
+# rewritten line ending makes every hunk fail to apply.
+*.patch -text
+
+# Binary, never transform.
+*.png binary
+*.ico binary
+*.zip binary
+*.gz  binary
