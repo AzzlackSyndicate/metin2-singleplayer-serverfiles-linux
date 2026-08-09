@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.1.8 — 2026-08-10
+
+### Changed
+
+- The update page now says to re-run the command that installed the server,
+  and what an update leaves alone, instead of explaining a setting that is off.
+
+---
+
 ## 1.1.7 — 2026-08-10
 
 ### Changed

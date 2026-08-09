@@ -1424,18 +1424,19 @@ T = {
  "upd_started":  {"en":"The update has been requested. It starts within a few seconds.",
                   "de":"Das Update wurde angefordert. Es startet in wenigen Sekunden.",
                   "tr":"Güncelleme istendi. Birkaç saniye içinde başlar."},
- "upd_apply_off_t":{"en":"Updating from the panel is switched off","de":"Updates aus dem Panel sind ausgeschaltet","tr":"Panelden güncelleme kapalı"},
- "upd_apply_off":{"en":"That is the default, and on a server other people can reach it is the right setting: an update means running commands on the host, and this panel is the part of your server that strangers can talk to. Update by hand instead — one command, in UPDATING.md. If you do want the button, UPDATING.md says how, and says plainly what you are accepting.",
-                  "de":"Das ist die Voreinstellung, und auf einem Server, den andere erreichen können, ist es die richtige: Ein Update bedeutet, Befehle auf dem Host auszuführen, und dieses Panel ist der Teil deines Servers, mit dem Fremde sprechen können. Aktualisiere stattdessen von Hand — ein Befehl, steht in UPDATING.md. Wenn du den Knopf trotzdem willst, steht dort, wie es geht und was du dir damit einhandelst.",
-                  "tr":"Varsayılan budur ve başkalarının erişebildiği bir sunucuda doğru olan da budur: güncelleme, ana makinede komut çalıştırmak demektir ve bu panel, sunucunun yabancıların konuşabildiği parçasıdır. Bunun yerine elle güncelle — tek komut, UPDATING.md içinde. Yine de düğmeyi istiyorsan, orada nasıl açılacağı ve karşılığında neyi kabul ettiğin açıkça yazıyor."},
  "upd_no_watcher_t":{"en":"The updater is not running","de":"Der Updater läuft nicht","tr":"Güncelleyici çalışmıyor"},
  "upd_no_watcher":{"en":"Updating from the panel is switched on, but the small helper that carries it out is not there — so the button would do nothing. Start it on the server with:",
                   "de":"Updates aus dem Panel sind eingeschaltet, aber das kleine Hilfsprogramm, das sie ausführt, läuft nicht — der Knopf würde also nichts tun. Starte es auf dem Server mit:",
                   "tr":"Panelden güncelleme açık, ama işi yapan küçük yardımcı çalışmıyor — yani düğme hiçbir şey yapmazdı. Sunucuda şununla başlat:"},
- "upd_manual_t": {"en":"Updating by hand","de":"Von Hand aktualisieren","tr":"Elle güncelleme"},
- "upd_manual":   {"en":"On the server, in the directory the stack was installed in:",
-                  "de":"Auf dem Server, im Verzeichnis, in dem der Stack installiert wurde:",
-                  "tr":"Sunucuda, yığının kurulduğu dizinde:"},
+ # Deliberately does not name a shell: the same page is served by a server on a
+ # Linux VPS and by one on somebody's PC, and the command shown underneath is
+ # whichever of the two installed this machine.
+ "upd_manual":   {"en":"Run the same command you used to install this server. It fetches the published version, rebuilds and restarts:",
+                  "de":"Führe denselben Befehl aus, mit dem du diesen Server installiert hast. Er holt die veröffentlichte Version, baut neu und startet neu:",
+                  "tr":"Bu sunucuyu kurarken kullandığın komutu tekrar çalıştır. Yayımlanan sürümü indirir, yeniden derler ve yeniden başlatır:"},
+ "upd_manual_keeps":{"en":"Your database is not touched: accounts, characters, items and guilds all stay, and so do your settings. Before anything changes it shows which version you have and which one is published, and asks. Players are disconnected while the server restarts, usually for a minute or two.",
+                  "de":"Deine Datenbank wird nicht angefasst: Konten, Charaktere, Gegenstände und Gilden bleiben, ebenso deine Einstellungen. Bevor sich etwas ändert, zeigt er dir, welche Version du hast und welche veröffentlicht ist, und fragt nach. Während des Neustarts fliegen Spieler kurz raus, meist für ein bis zwei Minuten.",
+                  "tr":"Veritabanına dokunulmaz: hesaplar, karakterler, eşyalar ve loncalar kalır, ayarların da öyle. Herhangi bir şey değişmeden önce hangi sürümde olduğunu ve hangisinin yayımlandığını gösterir ve sorar. Sunucu yeniden başlarken oyuncular kısa süre düşer, genelde bir iki dakika."},
  "upd_progress": {"en":"Progress","de":"Fortschritt","tr":"İlerleme"},
  "upd_waiting":  {"en":"Waiting for the updater to pick this up…","de":"Warte darauf, dass der Updater das aufnimmt…","tr":"Güncelleyicinin bunu almasını bekliyorum…"},
  "upd_lost":     {"en":"No contact with the panel — it is probably restarting. This page keeps trying.",
@@ -2510,9 +2511,9 @@ TPL_PATCHLOG = BASE.replace("__BODY__", """
 <pre class="cmd">cd /opt/metin2/stack
 docker compose --profile update up -d updater</pre>
 {% else %}
-<p class="muted"><b>{{t('upd_apply_off_t')}}.</b> {{t('upd_apply_off')}}</p>
 <p class="muted">{{t('upd_manual')}}</p>
 <pre class="cmd">{{manual}}</pre>
+<p class="muted">{{t('upd_manual_keeps')}}</p>
 {% endif %}
 </div>
 
