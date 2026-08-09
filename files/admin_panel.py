@@ -39,6 +39,13 @@ CLIENT_ZIP = _env_path("M2PANEL_CLIENT_ZIP", os.path.join(PANEL_DIR, "client.zip
 DL_DB  = _env_path("M2PANEL_DL_DB", os.path.join(PANEL_DIR, "downloads.db"))
 DL_MAX, DL_WINDOW = 3, 24 * 3600
 
+# A second ceiling, for the whole server rather than one address. The per-address
+# limit assumes an abuser has one address; a botnet, an open proxy pool or a
+# shared NAT breaks that assumption, and 1.2 GB a time turns into real money on
+# a metered link long before anyone notices. This caps the total, so the worst
+# case is bounded no matter how many addresses show up.
+DL_DAY_MAX = int(os.environ.get("M2PANEL_DL_DAY_MAX", "100") or 100)
+
 # ---- live server status -----------------------------------------------------
 # Shown on the front page: is the game up, and how many people are in it.
 # "Up" means both doors are open: the login server AND the first channel are
@@ -140,6 +147,29 @@ def _status_by_connect(host):
             return False, 0
     return True, 0
 
+INGAME_WINDOW = 600      # seconds; see _players_in_game()
+
+def _players_in_game():
+    """How many characters the game has written to recently.
+
+    Only used when the socket table is out of reach -- in a container the game's
+    connections live in another network namespace, so counting them is simply
+    not possible from here and the count used to sit at 0 forever. The game core
+    saves each logged-in character every few minutes, so a recent `last_play' is
+    a sound stand-in: it cannot see someone who logged in seconds ago, and it
+    keeps counting someone for a few minutes after they leave. Approximate and
+    honest beats exact and unavailable.
+    """
+    try:
+        with db() as c, c.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM player.player "
+                        "WHERE last_play > (NOW() - INTERVAL %s SECOND)",
+                        (INGAME_WINDOW,))
+            row = cur.fetchone()
+        return int(row["n"] if isinstance(row, dict) else row[0])
+    except Exception:
+        return 0        # database unreachable: report nothing, never guess
+
 def server_status():
     now = time.time()
     if now - _SRV["ts"] < 30:
@@ -149,6 +179,8 @@ def server_status():
         status_host = _status_host()
         if status_host:
             up, count = _status_by_connect(status_host)
+            if up:
+                count = _players_in_game()
         else:
             ports_open = set()
             for local, _foreign in _sockets(listening=True):
@@ -485,9 +517,9 @@ T = {
  "srv_offline":  {"en":"The game server is down at the moment — it usually comes right back. Downloads and account pages keep working.",
                   "de":"Der Spielserver ist gerade aus — meist ist er gleich wieder da. Download und Konto-Seiten funktionieren weiter.",
                   "tr":"Oyun sunucusu şu an kapalı — genellikle hemen geri gelir. İndirme ve hesap sayfaları çalışmaya devam eder."},
- "tip_srv":      {"en":"Checked live against the game itself, at most every 30 seconds: green means the login server and the first channel both answer. The number counts connections players hold open to the game.",
-                  "de":"Live am Spiel selbst geprüft, höchstens alle 30 Sekunden: Grün heißt, Login-Server und erster Kanal antworten beide. Die Zahl zählt die offenen Spieler-Verbindungen zum Spiel.",
-                  "tr":"Doğrudan oyunun kendisinden, en fazla 30 saniyede bir kontrol edilir: yeşil, giriş sunucusunun ve ilk kanalın yanıt verdiği anlamına gelir. Sayı, oyuncuların oyuna açık tuttuğu bağlantıları sayar."},
+ "tip_srv":      {"en":"Checked live against the game itself, at most every 30 seconds: green means the login server and the first channel both answer. The number is characters the game has saved in the last few minutes, so somebody who just logged in may take a moment to appear, and somebody who just left lingers a little.",
+                  "de":"Live am Spiel selbst geprüft, höchstens alle 30 Sekunden: Grün heißt, Login-Server und erster Kanal antworten beide. Die Zahl sind Charaktere, die das Spiel in den letzten Minuten gespeichert hat — wer sich gerade erst eingeloggt hat, erscheint also etwas verzögert, und wer eben gegangen ist, bleibt kurz stehen.",
+                  "tr":"Doğrudan oyunun kendisinden, en fazla 30 saniyede bir kontrol edilir: yeşil, giriş sunucusunun ve ilk kanalın yanıt verdiği anlamına gelir. Sayı, oyunun son birkaç dakikada kaydettiği karakterlerdir; yeni giren biri biraz gecikmeyle görünür, yeni çıkan biri ise kısa süre sayılmaya devam eder."},
  "tip_acc_col":  {"en":"The game account this character belongs to — the name the player types at the game login. One account can hold several characters.",
                   "de":"Das Spiel-Konto, zu dem dieser Charakter gehört — der Name, den der Spieler beim Spiel-Login eintippt. Ein Konto kann mehrere Charaktere haben.",
                   "tr":"Bu karakterin bağlı olduğu oyun hesabı — oyuncunun oyun girişinde yazdığı ad. Bir hesapta birden çok karakter olabilir."},
@@ -670,9 +702,9 @@ T = {
  "op_local_hint":{"en":"If you later want friends to play, do not open ports on your home router: that hands your home address to every player, your upload speed becomes the bottleneck, and the server is gone whenever this computer is. Rent a small Linux server instead and run the installer there — the project's documentation has the one command for it.",
                   "de":"Wenn später Freunde mitspielen sollen, öffne keine Ports an deinem Heimrouter: Das gibt deine Heimadresse an jeden Spieler weiter, dein Upload wird zum Flaschenhals, und der Server ist weg, sobald dieser Rechner aus ist. Miete stattdessen einen kleinen Linux-Server und führe den Installer dort aus — der eine Befehl dafür steht in der Dokumentation des Projekts.",
                   "tr":"İleride arkadaşlarının da oynamasını istersen, ev yönlendiricinde port açma: bu, ev adresini her oyuncuya verir, yükleme hızın darboğaz olur ve bu bilgisayar kapandığında sunucu da gider. Bunun yerine küçük bir Linux sunucu kirala ve kurulumu orada çalıştır — bunun tek komutu projenin belgelerinde."},
- "op_secure":    {"en":"Do this first: the server files ship with two accounts, admin and test, both with the password 123456789. Everyone who has ever seen these files knows them. Change or delete them before anyone else can reach your server.",
-                  "de":"Mach das als Erstes: Die Serverdateien bringen zwei Konten mit, admin und test, beide mit dem Passwort 123456789. Jeder, der diese Dateien je gesehen hat, kennt sie. Ändere oder lösche sie, bevor jemand anderes deinen Server erreichen kann.",
-                  "tr":"Önce şunu yap: sunucu dosyaları admin ve test adında iki hesapla gelir, ikisinin de şifresi 123456789. Bu dosyaları görmüş herkes bunları bilir. Başkası sunucuna ulaşabilmeden önce bunları değiştir veya sil."},
+ "op_secure":    {"en":"The server files ship with two accounts, admin and test, sharing one password that is printed in the package's own readme. They were deleted when this server was set up, along with the game-master entry that went with them — because leaving that entry behind would have let the next person to register those names inherit the rights. So there is no game master yet: to make yourself one, add your own account and character to the gmlist table and restart the game.",
+                  "de":"Die Serverdateien bringen zwei Konten mit, admin und test, mit einem gemeinsamen Passwort, das in der Readme des Pakets abgedruckt ist. Beide wurden beim Einrichten dieses Servers gelöscht, zusammen mit dem zugehörigen Spielleiter-Eintrag — denn hätte man den stehen lassen, hätte der Nächste, der diese Namen registriert, die Rechte geerbt. Es gibt daher noch keinen Spielleiter: Trag dich mit deinem eigenen Konto und Charakter in die gmlist-Tabelle ein und starte das Spiel neu.",
+                  "tr":"Sunucu dosyaları admin ve test adında iki hesapla gelir; ikisi de paketin kendi readme dosyasında yazan tek bir şifreyi paylaşır. Bu sunucu kurulurken ikisi de, kendilerine ait oyun yöneticisi kaydıyla birlikte silindi — çünkü o kayıt kalsaydı, bu adları sonradan kaydeden kişi yetkileri devralırdı. Dolayısıyla henüz bir oyun yöneticisi yok: kendini yönetici yapmak için kendi hesabını ve karakterini gmlist tablosuna ekle ve oyunu yeniden başlat."},
  "op_rates":     {"en":"Rates decide how fast the whole server plays: experience, item drops and yang. 100% is the game exactly as it shipped. Saving restarts the game for well under a minute, so players are briefly disconnected.",
                   "de":"Die Raten bestimmen, wie schnell sich der ganze Server spielt: Erfahrung, Item-Drops und Yang. 100 % ist das Spiel genau so, wie es ausgeliefert wurde. Beim Speichern startet das Spiel für deutlich unter einer Minute neu, Spieler fliegen also kurz raus.",
                   "tr":"Oranlar tüm sunucunun ne kadar hızlı oynandığını belirler: tecrübe, eşya düşüşü ve yang. %100, oyunun çıktığı hâlidir. Kaydettiğinde oyun bir dakikadan çok kısa süre yeniden başlar, oyuncular kısa süre düşer."},
@@ -718,6 +750,11 @@ T = {
                   "de":"Erzeugt einen Einmal-Link, mit dem der Spieler selbst ein neues Passwort setzt. Am Konto ändert sich nichts, bis der Link benutzt wird.",
                   "tr":"Oyuncunun kendisinin yeni şifre belirlemesini sağlayan tek kullanımlık bir bağlantı oluşturur. Bağlantı kullanılana dek hesapta hiçbir şey değişmez."},
  "dl_limit_title":{"en":"Download limit reached","de":"Download-Limit erreicht","tr":"İndirme sınırına ulaşıldı"},
+ # Shown when the whole server has hit its daily ceiling rather than the visitor
+ # -- otherwise the reader concludes they did something wrong, and they didn't.
+ "dl_limit_all": {"en":"The game has been downloaded the maximum number of times across the whole server today. This is not about you — somebody has to be the one who arrives after the last slot. It frees up again in about {h} h, and an interrupted download can always be resumed, which costs nothing.",
+                  "de":"Das Spiel wurde heute serverweit schon so oft heruntergeladen, wie erlaubt ist. Das liegt nicht an dir — irgendwer muss der sein, der nach dem letzten freien Platz ankommt. In etwa {h} Std. wird wieder einer frei. Ein abgebrochener Download lässt sich jederzeit fortsetzen, das kostet nichts.",
+                  "tr":"Oyun bugün sunucu genelinde izin verilen en yüksek sayıda indirildi. Bu senden kaynaklanmıyor — birinin son boş yerden sonra gelmesi gerekiyordu. Yaklaşık {h} saat içinde yeniden yer açılır. Yarım kalan bir indirme her zaman kaldığı yerden sürdürülebilir, bu sınırdan sayılmaz."},
  "dl_limit":     {"en":"The game was already downloaded 3 times from your address in the last 24 hours — that is the limit, so the server's bandwidth stays free for playing. Please try again in about {h} h. An interrupted download can always be resumed, that costs nothing.",
                   "de":"Das Spiel wurde von deiner Adresse in den letzten 24 Stunden schon 3-mal heruntergeladen — mehr geht nicht, damit die Bandbreite des Servers zum Spielen frei bleibt. Versuche es in etwa {h} Std. wieder. Ein abgebrochener Download lässt sich jederzeit fortsetzen, das kostet nichts.",
                   "tr":"Oyun son 24 saatte senin adresinden zaten 3 kez indirildi — sunucunun bant genişliği oyuna kalsın diye sınır bu. Yaklaşık {h} saat sonra tekrar dene. Yarım kalan bir indirme her zaman kaldığı yerden sürdürülebilir, bu sınırdan sayılmaz."},
@@ -1216,7 +1253,7 @@ TPL_DL_LIMIT = BASE.replace("__BODY__", """
 <div class="card" style="max-width:420px;margin:40px auto;text-align:center">
 <div style="font-size:48px">⏳</div>
 <h3>{{t('dl_limit_title')}}</h3>
-<p class="muted" style="font-size:15px">{{ t('dl_limit').replace('{h}', wait_h|string) }}</p>
+<p class="muted" style="font-size:15px">{{ t('dl_limit_all' if scope == 'all' else 'dl_limit').replace('{h}', wait_h|string) }}</p>
 <p><a href="{{url_for('login')}}">← Back</a></p></div>""")
 
 TPL_RESET = BASE.replace("__BODY__", """
@@ -1622,24 +1659,49 @@ def login():
     return render_template_string(TPL_LOGIN, client_ready=os.path.exists(CLIENT_ZIP), client_name=CLIENT_LABEL, client_url=CLIENT_URL)
 
 def _dl_quota_take(ip):
-    """Spend one download slot for this address, sliding 24-hour window.
+    """Spend one download slot, against two ceilings, both over a rolling 24h.
 
-    Returns (allowed, seconds_until_a_slot_frees). Addresses are stored only as
-    a salted hash - the quota needs to recognise an address again, not know it.
+      * DL_MAX per address  -- one person cannot loop the download
+      * DL_DAY_MAX in total -- a pool of addresses cannot either
+
+    Returns (allowed, seconds_until_a_slot_frees, scope) where scope is "ip" or
+    "all" so the page can say which limit was hit; being told "wait 9 hours"
+    without being told it is not about you is quietly infuriating.
+
+    Addresses are stored only as a salted hash: the quota has to recognise an
+    address again, not know what it was.
     """
     key = hashlib.sha256((CONF["salt"] + "|" + str(ip)).encode()).hexdigest()
     now = time.time()
-    con = sqlite3.connect(DL_DB, timeout=5)
+    con = sqlite3.connect(DL_DB, timeout=15, isolation_level=None)
     try:
+        con.execute("PRAGMA journal_mode=WAL")      # readers never block a writer
         con.execute("CREATE TABLE IF NOT EXISTS dl (ip TEXT NOT NULL, ts REAL NOT NULL)")
         con.execute("CREATE INDEX IF NOT EXISTS dl_ip ON dl (ip, ts)")
-        con.execute("DELETE FROM dl WHERE ts < ?", (now - DL_WINDOW,))
-        rows = con.execute("SELECT ts FROM dl WHERE ip = ? ORDER BY ts", (key,)).fetchall()
-        if len(rows) >= DL_MAX:
-            return False, max(1, int(rows[0][0] + DL_WINDOW - now))
-        con.execute("INSERT INTO dl VALUES (?, ?)", (key, now))
-        con.commit()
-        return True, 0
+        con.execute("CREATE INDEX IF NOT EXISTS dl_ts ON dl (ts)")
+        # BEGIN IMMEDIATE takes the write lock up front, so the count and the
+        # insert cannot straddle another request doing the same thing. Without
+        # it, two simultaneous downloads both read "2 used" and both proceed --
+        # which is exactly the case a rate limit exists for.
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute("DELETE FROM dl WHERE ts < ?", (now - DL_WINDOW,))
+            total = con.execute("SELECT COUNT(*) FROM dl").fetchone()[0]
+            if total >= DL_DAY_MAX:
+                oldest = con.execute("SELECT MIN(ts) FROM dl").fetchone()[0] or now
+                con.execute("COMMIT")               # keep the cleanup
+                return False, max(1, int(oldest + DL_WINDOW - now)), "all"
+            rows = con.execute("SELECT ts FROM dl WHERE ip = ? ORDER BY ts",
+                               (key,)).fetchall()
+            if len(rows) >= DL_MAX:
+                con.execute("COMMIT")
+                return False, max(1, int(rows[0][0] + DL_WINDOW - now)), "ip"
+            con.execute("INSERT INTO dl VALUES (?, ?)", (key, now))
+            con.execute("COMMIT")
+            return True, 0, ""
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
     finally:
         con.close()
 
@@ -1745,10 +1807,19 @@ def download():
     rng = request.headers.get("Range", "")
     fresh = request.method == "GET" and (not rng or bool(re.match(r"\s*bytes\s*=\s*0\s*-", rng)))
     if fresh and not session.get("auth"):
-        allowed, wait = _dl_quota_take(request.remote_addr)
+        try:
+            allowed, wait, scope = _dl_quota_take(request.remote_addr)
+        except Exception:
+            # The counter is a guard, not the point of the page. If its little
+            # database is unwritable we log it and serve -- refusing every
+            # download because a quota file is broken is the worse failure.
+            app.logger.exception("download quota unavailable, serving anyway")
+            allowed, wait, scope = True, 0, ""
         if not allowed:
             resp = app.response_class(
-                render_template_string(TPL_DL_LIMIT, wait_h=max(1, -(-wait // 3600))),
+                render_template_string(TPL_DL_LIMIT,
+                                       wait_h=max(1, -(-wait // 3600)),
+                                       scope=scope),
                 status=429)
             resp.headers["Retry-After"] = str(wait)
             return resp
