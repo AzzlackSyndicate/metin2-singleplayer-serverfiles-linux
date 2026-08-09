@@ -38,6 +38,11 @@ services:
       MARIADB_ROOT_PASSWORD: "${M2_DB_ROOT_PASSWORD:?set M2_DB_ROOT_PASSWORD in .env}"
       M2_DB_USER: "${M2_DB_USER:-metin2}"
       M2_DB_PASSWORD: "${M2_DB_PASSWORD:?set M2_DB_PASSWORD in .env}"
+      # The shipped `admin' and `test' accounts share one published password,
+      # so they are deleted on first initialisation along with their gmlist
+      # entry. Set to 1 to keep them -- defensible on a machine only you can
+      # reach, indefensible on anything with a public address.
+      M2_KEEP_DEMO_ACCOUNTS: "${M2_KEEP_DEMO_ACCOUNTS:-0}"
       TZ: "${M2_TZ:-UTC}"
 
     volumes:

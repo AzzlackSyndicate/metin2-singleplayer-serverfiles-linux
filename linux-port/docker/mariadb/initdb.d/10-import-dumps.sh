@@ -82,4 +82,52 @@ if [ "$protos" -lt 1 ]; then
   exit 1
 fi
 
+# -----------------------------------------------------------------------------
+#  Remove the shipped demo accounts.
+#
+#  These server files ship `admin' and `test', both with the password 123456789,
+#  and that pair is printed in the package's own Readme -- so everybody who has
+#  ever downloaded it can log into any server that keeps them. On a server that
+#  is reachable from the internet they are not a default, they are an open door.
+#
+#  The gmlist row goes too, and that part matters more than it looks. GM rights
+#  are granted to the COMBINATION of an account name and a character name. Leave
+#  the row behind and the names are now free: the next person to register an
+#  account called `admin' and a character called `[SA]Admin' is handed
+#  IMPLEMENTOR. Deleting the account without deleting the row would make the
+#  server less safe than leaving both alone.
+#
+#  This runs only on a first initialisation, when nothing but the shipped data
+#  exists, so no real player can be caught by it. Set M2_KEEP_DEMO_ACCOUNTS=1 to
+#  keep them -- reasonable on a machine only you can reach, and the panel says
+#  as much.
+#
+#  To make yourself a GM afterwards, with your own account and character:
+#      INSERT INTO common.gmlist (mAccount, mName, mContactIP, mServerIP, mAuthority)
+#      VALUES ('youraccount', 'YourCharacter', '', 'ALL', 'IMPLEMENTOR');
+#  then restart the game.
+# -----------------------------------------------------------------------------
+if [ "${M2_KEEP_DEMO_ACCOUNTS:-0}" = "1" ]; then
+  echo "[initdb] keeping the shipped admin/test accounts (M2_KEEP_DEMO_ACCOUNTS=1)"
+  echo "[initdb]   both still have the published password 123456789"
+else
+  echo "[initdb] removing the shipped demo accounts"
+  before=$(mysql_do -N -B -e "SELECT COUNT(*) FROM account.account WHERE login IN ('admin','test')" 2>/dev/null || echo 0)
+  mysql_do <<'SQL'
+DELETE FROM player.player
+      WHERE account_id IN (SELECT id FROM account.account WHERE login IN ('admin','test'));
+DELETE FROM player.player_index
+      WHERE id IN (SELECT id FROM account.account WHERE login IN ('admin','test'));
+DELETE FROM common.gmlist WHERE mAccount IN ('admin','test');
+DELETE FROM account.account WHERE login IN ('admin','test');
+SQL
+  after=$(mysql_do -N -B -e "SELECT COUNT(*) FROM account.account WHERE login IN ('admin','test')" 2>/dev/null || echo 0)
+  gm=$(mysql_do -N -B -e "SELECT COUNT(*) FROM common.gmlist" 2>/dev/null || echo 0)
+  echo "[initdb]   accounts removed: $((before - after)) of $before, gmlist rows left: $gm"
+  if [ "$after" != "0" ]; then
+    echo "[initdb] WARNING: a demo account survived -- delete it by hand before"
+    echo "[initdb]          anyone else can reach this server."
+  fi
+fi
+
 echo "[initdb] database initialisation complete"
