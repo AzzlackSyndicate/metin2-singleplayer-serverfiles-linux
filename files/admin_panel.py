@@ -204,24 +204,51 @@ def public_rates():
 # Size is instant; the SHA256 of 1.2 GB takes a few seconds, so it is
 # computed once in a background thread after startup and appears on the
 # page as soon as it is ready.
-CLIENT_FACTS = {"size": 0, "sha256": ""}
-try:
-    CLIENT_FACTS["size"] = os.path.getsize(CLIENT_ZIP)
-except OSError:
-    pass
+CLIENT_FACTS = {"size": 0, "sha256": "", "mtime": 0.0, "ts": 0.0}
+_CLIENT_LOCK = threading.Lock()
 
-def _client_sha_worker():
+def _client_sha_worker(path, size, mtime):
     try:
         h = hashlib.sha256()
-        with open(CLIENT_ZIP, "rb") as f:
+        with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
-        CLIENT_FACTS["sha256"] = h.hexdigest()
     except OSError:
-        pass
+        return
+    with _CLIENT_LOCK:
+        # Publish only if the file is still the one we hashed. A rebuild that
+        # lands mid-hash would otherwise get the previous client's checksum.
+        if CLIENT_FACTS["size"] == size and CLIENT_FACTS["mtime"] == mtime:
+            CLIENT_FACTS["sha256"] = h.hexdigest()
 
-if CLIENT_FACTS["size"]:
-    threading.Thread(target=_client_sha_worker, daemon=True).start()
+def client_facts():
+    """Size and checksum of the client, re-checked as it appears or changes.
+
+    Reading this once at import was wrong in the normal case rather than an
+    edge case: the client is built AFTER the panel starts -- often half an hour
+    after, on a fresh install -- and it is rebuilt whenever the server address
+    changes. The size and checksum then stayed at their startup values until
+    somebody restarted the panel, and nothing anywhere told them to.
+    """
+    now = time.time()
+    with _CLIENT_LOCK:
+        if now - CLIENT_FACTS["ts"] < 10:      # a stat per request is wasteful
+            return CLIENT_FACTS
+        CLIENT_FACTS["ts"] = now
+        try:
+            st = os.stat(CLIENT_ZIP)
+        except OSError:                        # not built yet, or removed again
+            CLIENT_FACTS.update(size=0, sha256="", mtime=0.0)
+            return CLIENT_FACTS
+        if st.st_size == CLIENT_FACTS["size"] and st.st_mtime == CLIENT_FACTS["mtime"]:
+            return CLIENT_FACTS
+        CLIENT_FACTS.update(size=st.st_size, mtime=st.st_mtime, sha256="")
+        size, mtime = st.st_size, st.st_mtime
+    # Hashing 1.2 GB takes seconds, so it happens off the request thread and
+    # the checksum simply appears on the page once it is ready.
+    threading.Thread(target=_client_sha_worker,
+                     args=(CLIENT_ZIP, size, mtime), daemon=True).start()
+    return CLIENT_FACTS
 
 def human_size(n):
     n = float(n)
@@ -850,10 +877,11 @@ def csrf_protect():
 
 @app.context_processor
 def inject_i18n():
+    _cf = client_facts()
     return {"t": t, "langs": LANGS, "curlang": lang(), "csrf_token": csrf_token(),
             "brand": BRAND, "srv": server_status(), "rates": public_rates(),
-            "dlsize": human_size(CLIENT_FACTS["size"]) if CLIENT_FACTS["size"] else "",
-            "dlsha": CLIENT_FACTS["sha256"],
+            "dlsize": human_size(_cf["size"]) if _cf["size"] else "",
+            "dlsha": _cf["sha256"],
             "local_only": bool(CONF.get("local_only", False))}
 
 @app.route("/lang/<code>")

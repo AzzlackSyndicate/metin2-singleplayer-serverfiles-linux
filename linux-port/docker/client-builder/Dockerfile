@@ -67,7 +67,16 @@ RUN sed -i 's/\r$//' /usr/local/bin/m2-client-build \
 # once the build has finished. That is what keeps a half-built zip away from
 # players.
 RUN mkdir -p /var/cache/m2client /out /archive \
- && ln -s /var/cache/m2client /usr/local/m2panel
+ && ln -s /var/cache/m2client /usr/local/m2panel \
+ && chown 2001:2001 /out
+# ^ /out is the panel's data volume. Docker seeds an EMPTY named volume from the
+# image directory it is first mounted on -- ownership included -- and this
+# container is usually the first to put anything in it. Left as root, the
+# volume's own directory becomes root-owned, and the panel (which runs as uid
+# 2001) can then no longer create downloads.db beside client.zip. The symptom is
+# nasty because it is not the client that breaks: the build succeeds, the zip
+# appears, and every /download request answers 500 until the panel is restarted.
+# 2001:2001 is the panel image's uid:gid -- keep the two in step.
 VOLUME ["/var/cache/m2client"]
 
 ENV M2_CLIENT_OUT=/out/client.zip \
