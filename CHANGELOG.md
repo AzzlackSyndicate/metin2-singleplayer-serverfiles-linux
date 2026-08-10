@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.2.1 — 2026-08-10
+
+### Changed
+
+- Removed the paragraph about the deleted `admin` and `test` accounts from the
+  panel's introduction.
+
+---
+
 ## 1.2.0 — 2026-08-10
 
 ### Changed

@@ -1263,9 +1263,6 @@ T = {
  "op_local_hint":{"en":"If you later want friends to play, do not open ports on your home router: that hands your home address to every player, your upload speed becomes the bottleneck, and the server is gone whenever this computer is. Rent a small Linux server instead and run the installer there — the project's documentation has the one command for it.",
                   "de":"Wenn später Freunde mitspielen sollen, öffne keine Ports an deinem Heimrouter: Das gibt deine Heimadresse an jeden Spieler weiter, dein Upload wird zum Flaschenhals, und der Server ist weg, sobald dieser Rechner aus ist. Miete stattdessen einen kleinen Linux-Server und führe den Installer dort aus — der eine Befehl dafür steht in der Dokumentation des Projekts.",
                   "tr":"İleride arkadaşlarının da oynamasını istersen, ev yönlendiricinde port açma: bu, ev adresini her oyuncuya verir, yükleme hızın darboğaz olur ve bu bilgisayar kapandığında sunucu da gider. Bunun yerine küçük bir Linux sunucu kirala ve kurulumu orada çalıştır — bunun tek komutu projenin belgelerinde."},
- "op_secure":    {"en":"The server files ship with two accounts, admin and test, sharing one password that is printed in the package's own readme. They were deleted when this server was set up, along with the game-master entry that went with them — because leaving that entry behind would have let the next person to register those names inherit the rights. So there is no game master yet: to make yourself one, add your own account and character to the gmlist table and restart the game.",
-                  "de":"Die Serverdateien bringen zwei Konten mit, admin und test, mit einem gemeinsamen Passwort, das in der Readme des Pakets abgedruckt ist. Beide wurden beim Einrichten dieses Servers gelöscht, zusammen mit dem zugehörigen Spielleiter-Eintrag — denn hätte man den stehen lassen, hätte der Nächste, der diese Namen registriert, die Rechte geerbt. Es gibt daher noch keinen Spielleiter: Trag dich mit deinem eigenen Konto und Charakter in die gmlist-Tabelle ein und starte das Spiel neu.",
-                  "tr":"Sunucu dosyaları admin ve test adında iki hesapla gelir; ikisi de paketin kendi readme dosyasında yazan tek bir şifreyi paylaşır. Bu sunucu kurulurken ikisi de, kendilerine ait oyun yöneticisi kaydıyla birlikte silindi — çünkü o kayıt kalsaydı, bu adları sonradan kaydeden kişi yetkileri devralırdı. Dolayısıyla henüz bir oyun yöneticisi yok: kendini yönetici yapmak için kendi hesabını ve karakterini gmlist tablosuna ekle ve oyunu yeniden başlat."},
  "op_rates":     {"en":"Rates decide how fast the whole server plays: experience, item drops and yang. 100% is the game exactly as it shipped. Saving restarts the game for well under a minute, so players are briefly disconnected.",
                   "de":"Die Raten bestimmen, wie schnell sich der ganze Server spielt: Erfahrung, Item-Drops und Yang. 100 % ist das Spiel genau so, wie es ausgeliefert wurde. Beim Speichern startet das Spiel für deutlich unter einer Minute neu, Spieler fliegen also kurz raus.",
                   "tr":"Oranlar tüm sunucunun ne kadar hızlı oynandığını belirler: tecrübe, eşya düşüşü ve yang. %100, oyunun çıktığı hâlidir. Kaydettiğinde oyun bir dakikadan çok kısa süre yeniden başlar, oyuncular kısa süre düşer."},
@@ -2192,7 +2189,6 @@ TPL_DASH = BASE.replace("__BODY__", """
 <p>{{t('op_local_hint')}}</p>
 {% else %}
 <p>{{t('op_share')}}</p>
-<p><b>{{t('op_secure')}}</b></p>
 {% endif %}
 <p>{{t('op_rates')}}</p>
 <p>{{t('op_players')}}</p>
