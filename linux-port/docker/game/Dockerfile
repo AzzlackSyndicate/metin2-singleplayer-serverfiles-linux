@@ -222,9 +222,13 @@ COPY src/serverfiles/share/locale /quest-src/locale
 #       so mysql_direct_query is declared before the compile.
 #    4. Compile in a scratch directory with an empty object/, so the result is
 #       only web_admin's own output.
-#    5. qc exits 0 whether or not it wrote anything, so the three files that
-#       must exist are checked by hand. A silent no-op here would look exactly
-#       like a working build and fail only at runtime.
+#    5. qc exits 0 whether or not it wrote anything, so the outputs that must
+#       exist are checked by hand. A silent no-op here would look exactly like
+#       a working build and fail only at runtime. Both timer handlers are
+#       checked: the server timer that ages rows out, and the PLAYER timer
+#       that carries the five actions out. The offline path can be tested
+#       without a game client and the acting path cannot, so a missing player
+#       timer would pass every check an operator can run.
 #    6. locale_list gets the file appended: that is what make.py walks when an
 #       operator recompiles the tree by hand, and leaving it out would silently
 #       drop the helper the next time they do.
@@ -266,6 +270,11 @@ RUN set -eux; \
         || { echo "FATAL: qc produced no login handler for web_admin ($lang)"; exit 1; }; \
       find /tmp/qc-work/object -type d -name server_timer | grep -q . \
         || { echo "FATAL: qc produced no server_timer handler for web_admin ($lang)"; \
+             find /tmp/qc-work/object; exit 1; }; \
+      find /tmp/qc-work/object -type d -name timer | grep -q . \
+        || { echo "FATAL: qc produced no player-timer handler for web_admin ($lang) --"; \
+             echo "       that is the handler the five actions run in; without it the"; \
+             echo "       helper would only ever report players offline"; \
              find /tmp/qc-work/object; exit 1; }; \
       cp -a /tmp/qc-work/object "$out/object"; \
       cp -a /tmp/qc-work/web_admin.quest "$out/web_admin.quest"; \

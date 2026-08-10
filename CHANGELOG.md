@@ -17,6 +17,15 @@ every version here.
 
 ---
 
+## 1.3.4 — 2026-08-10
+
+### Fixed
+
+- The in-game helper no longer crashes the channel it runs on. It is still not
+  installed by default — nobody has played on the fix yet.
+
+---
+
 ## 1.3.3 — 2026-08-10
 
 ### Fixed
