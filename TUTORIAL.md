@@ -249,13 +249,14 @@ sell you anything. So:
 - **The game server is 2014 code.** It works, and it has been ported to Linux
   carefully with real tests, but it is old software with old assumptions. It is
   32-bit and it will not run on ARM.
-- **Teleport and running speed do not work.** The panel has buttons for both.
-  They work by leaving a request in the database for a small script running
-  *inside the game* to pick up — and nothing in this installation puts that
-  script into the game. Click either one and the panel waits about seven
-  seconds, then tells you the in-game helper did not answer. Nothing is changed
-  and nothing is damaged; the feature simply is not there. The technical detail
-  is in [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md).
+- **Teleport and running speed need the player to be in the game.** The panel
+  has buttons for both. They work by leaving a request in the database for a
+  small script running *inside the game* to pick up, and that script is part of
+  the server now. But neither one can be done to somebody who is logged out:
+  there is nowhere to write "is now standing over there" that the game would
+  believe, and a speed buff only exists while the character does. So if the
+  player is offline the panel tells you so instead of pretending. The technical
+  detail is in [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md).
 - **Items, yang and levels take a moment.** These go straight into the database,
   which the game only reads when a character is loaded — so the player has to
   log out and back in before they appear. The panel says so rather than

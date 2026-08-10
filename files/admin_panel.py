@@ -206,9 +206,16 @@ def ingame_helper_seen():
     """Has the in-game helper ever answered on this server?
 
     It is a quest running inside the game that watches web_admin_queue and
-    carries out what the panel puts there. A Docker build does not install it,
-    and the Lua binding it calls is not in the port either -- so on those
-    servers nothing ever picks a row up.
+    carries out what the panel puts there. The Docker build installs it and the
+    port carries the Lua binding it calls, so on a current stack it is there --
+    but this file also runs on servers built before that, and on hand-assembled
+    ones, where nothing ever picks a row up.
+
+    Note what this cannot see. The quest waits 30 s before claiming a row for a
+    player who is not logged in, and the panel gives up at 7 s and cancels, so
+    an action aimed at somebody offline never leaves evidence either way. Only a
+    successful in-game action does. Both messages that depend on this therefore
+    say what happened rather than why, and are true whichever it is.
 
     Without this the panel could not tell "the player is not logged in" from
     "nobody is listening", and reported the first for both: it told operators
@@ -1156,12 +1163,12 @@ T = {
  # Used when nothing is listening in the game, rather than when the player is
  # away -- saying "they weren't in game" to somebody who is standing in it
  # sends them looking for a problem with their character.
- "act_nohelper": {"en":"✅ Written to {name}'s account. This server has no in-game helper, so it appears the next time they log in — even if they are playing right now.",
-                  "de":"✅ Auf das Konto von {name} geschrieben. Dieser Server hat keinen In-Game-Helfer, es erscheint also beim nächsten Einloggen — auch wenn gerade gespielt wird.",
-                  "tr":"✅ {name} adlı oyuncunun hesabına yazıldı. Bu sunucuda oyun içi yardımcı yok, bu yüzden bir sonraki girişte görünür — şu anda oynuyor olsa bile."},
- "ingame_nohelper":{"en":"⛔ This server cannot teleport a character or change their running speed: both need a helper inside the game that this build does not install. Items, yang and levels do work — they are written to the account.",
-                  "de":"⛔ Dieser Server kann einen Charakter nicht teleportieren und seine Laufgeschwindigkeit nicht ändern: Beides braucht einen Helfer im Spiel, den diese Version nicht mitinstalliert. Gegenstände, Yang und Level funktionieren — sie werden auf das Konto geschrieben.",
-                  "tr":"⛔ Bu sunucu bir karakteri ışınlayamaz veya koşma hızını değiştiremez: ikisi de bu sürümün kurmadığı bir oyun içi yardımcıya ihtiyaç duyar. Eşya, yang ve seviye çalışır — bunlar hesaba yazılır."},
+ "act_nohelper": {"en":"✅ Written to {name}'s account — it appears the next time they log in.",
+                  "de":"✅ Auf das Konto von {name} geschrieben — es erscheint beim nächsten Einloggen.",
+                  "tr":"✅ {name} adlı oyuncunun hesabına yazıldı — bir sonraki girişte görünür."},
+ "ingame_nohelper":{"en":"⛔ Nothing in the game answered, so {name} was not moved and nothing was changed. Teleport and running speed only work on a character who is logged in, on a server whose in-game helper is running.",
+                  "de":"⛔ Aus dem Spiel kam keine Antwort, {name} wurde also nicht bewegt und nichts geändert. Teleportieren und Laufgeschwindigkeit wirken nur auf einen eingeloggten Charakter, auf einem Server, dessen In-Game-Helfer läuft.",
+                  "tr":"⛔ Oyundan yanıt gelmedi, bu yüzden {name} taşınmadı ve hiçbir şey değişmedi. Işınlama ve koşma hızı yalnızca giriş yapmış bir karakterde ve oyun içi yardımcısı çalışan bir sunucuda işe yarar."},
  "act_offline":  {"en":"✅ {name} wasn't in game right now — it was applied to their account and will be ready when they log in! 🎉",
                   "de":"✅ {name} war gerade nicht im Spiel — es wurde direkt auf dem Konto angewendet und ist beim nächsten Login da! 🎉",
                   "tr":"✅ {name} şu anda oyunda değildi — işlem hesabına uygulandı, giriş yaptığında hazır olacak! 🎉"},

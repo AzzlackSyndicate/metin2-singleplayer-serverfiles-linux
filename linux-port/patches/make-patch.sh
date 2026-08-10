@@ -126,6 +126,63 @@ HUNKS=$(grep -c '^@@'    "$TMP/body")
 ADDED=$(grep -c '^+[^+]' "$TMP/body")
 REMOVED=$(grep -c '^-[^-]' "$TMP/body")
 
+# ---------------------------------------------------------------------------
+#  The port/feature boundary
+# ---------------------------------------------------------------------------
+# Everything in this patch used to be one thing: make 2014 FreeBSD code compile
+# and run on Linux, changing no behaviour.  That is a claim a reviewer can check
+# cheaply, and it is worth keeping checkable.  Anything that is NOT that -- a
+# function the original server did not have -- must carry the marker
+#
+#     M2_FEATURE <name>
+#
+# on the line that introduces it.  This block finds those markers in the diff
+# and names them in the header, so the next person to read the patch is told
+# what is port and what is not before they read a single hunk, instead of having
+# to work it out.  A patch with no markers gets the old, unqualified sentence.
+FEATURES=$(grep '^+' "$TMP/body" \
+           | sed -n 's/.*M2_FEATURE[[:space:]]\{1,\}\([A-Za-z0-9_-]\{1,\}\).*/\1/p' \
+           | sort -u)
+
+if [ -n "$FEATURES" ]; then
+    FEATURE_SECTION="#  WHAT IS NOT PART OF THE PORT
+#      A port changes no behaviour: the same source, running the same way, on a
+#      different operating system.  These additions do change behaviour -- each
+#      is a function the r40250 server never had -- so they are named here and
+#      marked \`M2_FEATURE <name>' in the source they add:
+#"
+    for f in $FEATURES; do
+        # Every file the marker appears in, in patch order.  awk rather than
+        # grep -B, because a hunk can be further from its +++ line than any
+        # fixed context window.
+        WHERE=$( awk -v want="$f" '
+            /^\+\+\+ / { file = $2; sub(/^b\//, "", file); next }
+            /^\+/ && index($0, "M2_FEATURE") {
+                line = $0
+                sub(/.*M2_FEATURE[ \t]+/, "", line)
+                sub(/[^A-Za-z0-9_-].*/, "", line)
+                if (line == want && !(file in seen)) { seen[file] = 1; print "#              " file }
+            }' "$TMP/body" )
+        FEATURE_SECTION="$FEATURE_SECTION
+#          $f
+$WHERE"
+    done
+    FEATURE_SECTION="$FEATURE_SECTION
+#
+#      Nothing else in here adds a feature.  To check that claim:
+#          grep -n 'M2_FEATURE' 0001-r40250-linux-port.patch
+#      Every hit must be one of the names above.
+#
+"
+else
+    FEATURE_SECTION="#  WHAT IS NOT PART OF THE PORT
+#      Nothing.  This patch is a pure port: it changes no behaviour, only what
+#      the code needs to compile and run on Linux.  (No \`M2_FEATURE' marker was
+#      found in the diff.)
+#
+"
+fi
+
 # The baseline this applies to, named by content rather than by where it sits.
 # `find | sort | sha256sum' over the pristine tree is what anybody can re-run to
 # check they are patching the same thing we diffed against.
@@ -163,7 +220,7 @@ cat <<HEADER
 #      and neither of the linked game/db binaries), so a ported tree that has
 #      been compiled in produces exactly these bytes too.
 #
-#  MADE BY
+$FEATURE_SECTION#  MADE BY
 #      ./make-patch.sh --pristine <fresh metin2/src/server> --ported <our server/>
 #      Do not hand-edit this file.  Edit the ported tree and regenerate, or the
 #      next person to check the port against upstream gets a wrong answer.

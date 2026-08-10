@@ -170,6 +170,118 @@ RUN set -eux; \
     ls -la /out
 
 # =============================================================================
+# Stage 2b -- quests
+#
+#  The admin panel's in-game helper, web_admin.quest, compiled into every
+#  locale the data tree carries.
+#
+#  Why it needs a stage of its own: a .quest file is not read by the server, it
+#  is compiled by `qc' into a tree of small files under quest/object/ that the
+#  cores load at boot.  qc ships with the server files as a FreeBSD i386 binary
+#  which cannot run here, so it is built from the same source tree the cores are
+#  built from (game/src/quest/qc.cc) -- which is why this stage sits on top of
+#  `builder' and not somewhere cheaper.
+#
+#  Nothing about the stock quests changes.  qc is run in a scratch directory
+#  with an EMPTY object/, so the tree this stage produces contains only
+#  web_admin's own output and is copied over the runtime's locale tree as a pure
+#  addition.  The 237 quests the pack ships keep the object files they came
+#  with, byte for byte.
+# =============================================================================
+FROM builder AS quests
+
+# The panel's helper. Staged by ../prepare-context.sh from files/web_admin.quest.
+# Optional: an operator who does not want it deletes it from the context and
+# everything else here becomes a no-op.
+COPY quest/ /quest-add/
+
+# The stock data tree, for its quest_functions (the list of names qc will
+# accept) and for the locale layout.
+COPY src/serverfiles/share/locale /quest-src/locale
+
+#  What the RUN below does, in order -- kept here rather than as comments
+#  inside it, because a `#' line inside a backslash-continued RUN is a way to
+#  lose the rest of the command:
+#
+#    1. No quest in the context -> produce an empty /out-quest and stop. The
+#       runtime copies nothing and the panel falls back to the database.
+#    2. Delete the shipped FreeBSD qc and build our own from qc.cc. Its
+#       Makefile hardcodes the porting host's compiler name, so CPP is
+#       overridden on the command line rather than the Makefile edited -- that
+#       file is upstream's and stays that way. -m32 because liblua in this
+#       stage is 32-bit, like everything else here.
+#
+#       qc.cc calls strlen/strcmp without including <cstring>; it built in 2019
+#       because the headers of the day dragged it in for free, and it does not
+#       under GCC 13. CPPFLAGS force-includes the three headers rather than
+#       adding #include lines to a file that is not ours -- same effect, and
+#       nothing about the upstream source has to change. -w silences the
+#       decades of warnings, which are not news and not ours to fix.
+#    3. For each locale: qc reads `quest_functions' from its working directory
+#       and refuses any name not listed there ("Calls undeclared function!"),
+#       so mysql_direct_query is declared before the compile.
+#    4. Compile in a scratch directory with an empty object/, so the result is
+#       only web_admin's own output.
+#    5. qc exits 0 whether or not it wrote anything, so the three files that
+#       must exist are checked by hand. A silent no-op here would look exactly
+#       like a working build and fail only at runtime.
+#    6. locale_list gets the file appended: that is what make.py walks when an
+#       operator recompiles the tree by hand, and leaving it out would silently
+#       drop the helper the next time they do.
+#    7. The output tree is made world-readable, and that is not cosmetic. qc
+#       creates object/state with mode 0700 (S_IRWXU), and the runtime COPY
+#       below lands this tree ON TOP of the stock one -- so an unchmodded
+#       object/state replaces the pack's readable directory with a root-only
+#       one, and the server, which runs as an unprivileged account, then loads
+#       NO quests at all. Every core still starts and still listens, so
+#       nothing looks wrong until a player clicks an NPC. Hence the explicit
+#       chmod and the assertion under it.
+RUN set -eux; \
+    mkdir -p /out-quest; \
+    if [ ! -f /quest-add/web_admin.quest ]; then \
+      echo "note: no web_admin.quest in the build context -- the panel will use"; \
+      echo "      its database fallback and Teleport/Running speed will not work."; \
+      mkdir -p /out-quest; exit 0; \
+    fi; \
+    rm -f game/src/quest/qc; \
+    make -C game/src/quest CPP="g++ -m32" \
+         CPPFLAGS="-g -w -include cstring -include cstdio -include cstdlib"; \
+    test -x game/src/quest/qc; \
+    file -b game/src/quest/qc | grep -q 'ELF 32-bit'; \
+    for questdir in /quest-src/locale/*/quest; do \
+      [ -d "$questdir" ] || continue; \
+      lang="$(basename "$(dirname "$questdir")")"; \
+      out="/out-quest/$lang/quest"; \
+      rm -rf /tmp/qc-work; \
+      mkdir -p "$out" /tmp/qc-work/object; \
+      cp "$questdir/quest_functions" /tmp/qc-work/quest_functions; \
+      grep -qx 'mysql_direct_query' /tmp/qc-work/quest_functions \
+        || echo 'mysql_direct_query' >> /tmp/qc-work/quest_functions; \
+      sed 's/\r$//' /quest-add/web_admin.quest > /tmp/qc-work/web_admin.quest; \
+      ( cd /tmp/qc-work && /src/server/game/src/quest/qc web_admin.quest ); \
+      test -s /tmp/qc-work/object/state/web_admin \
+        || { echo "FATAL: qc produced no state file for web_admin ($lang)"; \
+             find /tmp/qc-work/object; exit 1; }; \
+      test -d /tmp/qc-work/object/notarget/login \
+        || { echo "FATAL: qc produced no login handler for web_admin ($lang)"; exit 1; }; \
+      find /tmp/qc-work/object -type d -name server_timer | grep -q . \
+        || { echo "FATAL: qc produced no server_timer handler for web_admin ($lang)"; \
+             find /tmp/qc-work/object; exit 1; }; \
+      cp -a /tmp/qc-work/object "$out/object"; \
+      cp -a /tmp/qc-work/web_admin.quest "$out/web_admin.quest"; \
+      cp -a /tmp/qc-work/quest_functions "$out/quest_functions"; \
+      cp -a "$questdir/locale_list" "$out/locale_list"; \
+      grep -qx 'web_admin.quest' "$out/locale_list" || echo 'web_admin.quest' >> "$out/locale_list"; \
+      find "$out" -type d -exec chmod 0755 {} +; \
+      find "$out" -type f -exec chmod 0644 {} +; \
+      [ "$(stat -c '%a' "$out/object/state")" = "755" ] \
+        || { echo "FATAL: $out/object/state is not world-readable; the game user could not load any quest"; exit 1; }; \
+      echo "compiled web_admin.quest for locale '$lang':"; \
+      find "$out/object" -type f | sed 's|^|    |'; \
+      rm -rf /tmp/qc-work; \
+    done
+
+# =============================================================================
 # Stage 3 -- runtime
 # =============================================================================
 FROM ${BASE_IMAGE} AS runtime
@@ -212,6 +324,39 @@ COPY src/serverfiles/share/conf    /opt/metin2/share/conf
 COPY src/serverfiles/share/data    /opt/metin2/share/data
 COPY src/serverfiles/share/locale  /opt/metin2/share/locale
 COPY src/serverfiles/share/package /opt/metin2/share/package
+
+# The admin panel's in-game helper, compiled in stage 2b. A pure addition on
+# top of the line above: new files under quest/object/, the quest source next
+# to the 300 that ship with the pack, and two list files (quest_functions,
+# locale_list) that gain one line each. No stock quest object is touched.
+#
+# Empty when the operator removed web_admin.quest from the build context, in
+# which case this COPY is a no-op and the panel keeps its database fallback.
+COPY --from=quests /out-quest/ /opt/metin2/share/locale/
+
+# The cores run as an unprivileged account and read this tree by path. A single
+# directory in it that root alone can enter costs every quest below that point,
+# silently -- the server starts, listens, and accepts players who then find that
+# no NPC does anything at all.
+#
+# It is not hypothetical in either direction. quest/object/state arrives mode
+# 0700 from qc (which is why stage 2b chmods its own output), and the pack's own
+# make.py ends with `chmod -R 770 object', so a context staged on a filesystem
+# that keeps Unix modes -- i.e. any Linux host -- carries 0770 root-owned
+# directories in from upstream too. On Windows the bind mount hides that by
+# presenting everything as 0755, which is the only reason it has not bitten yet.
+#
+# So: repair, then assert. `find ... ! -perm' touches only what is actually
+# wrong, so on a context that is already fine this adds an empty layer rather
+# than a second copy of an 84 MB tree.
+RUN set -eu; \
+    find /opt/metin2/share -type d ! -perm -005 -exec chmod a+rx {} + ; \
+    find /opt/metin2/share -type f ! -perm -004 -exec chmod a+r  {} + ; \
+    bad="$(find /opt/metin2/share \( -type d ! -perm -005 \) -o \( -type f ! -perm -004 \) | head -5)"; \
+    if [ -n "$bad" ]; then \
+      echo "FATAL: still not readable by the server account:"; echo "$bad"; exit 1; \
+    fi; \
+    echo "share tree is readable by the server account"
 
 # Seed for a core's mark/ directory (guild symbols).  Copied into the state
 # volume on first run only, so guild marks uploaded by players survive.

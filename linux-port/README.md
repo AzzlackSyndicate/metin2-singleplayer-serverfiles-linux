@@ -21,7 +21,7 @@ patch**:
 
 | | |
 |---|---|
-| [`patches/0001-r40250-linux-port.patch`](patches/0001-r40250-linux-port.patch) | 109 KB, **28 files**, 64 hunks, +1742 / −40. Every source change the port makes. |
+| [`patches/0001-r40250-linux-port.patch`](patches/0001-r40250-linux-port.patch) | 119 KB, **30 files**, 68 hunks, +1999 / −40. Every source change made to the server: the port, plus one clearly-labelled feature — see *WHAT IS NOT PART OF THE PORT* in the patch's own header. |
 | [`build-deps-40250.sh`](build-deps-40250.sh) | Builds the 32-bit dependency tree the r40250 Makefiles expect (Crypto++ 8.4.0, DevIL 1.8.0, MariaDB Connector/C 3.3.10, OpenSSL, zlib, libmd, and 40250's own forked Lua 5.0.3). |
 | [`fetch-sources.sh`](fetch-sources.sh) | Turns a clean checkout into a buildable Docker context: obtains the upstream archive, extracts source + `share/` + SQL dumps, applies the patch, runs `docker/prepare-context.sh`. |
 | [`docker/`](docker/) | The deployment. See [docker/README.md](docker/README.md). |
@@ -61,13 +61,16 @@ loopback only) do all of that for you, including installing Docker.
 
 ## Known limits
 
-- **The panel's Teleport and Running speed do nothing on the Docker path.** They
-  work by writing a row into `player.web_admin_queue` for an in-game quest to
-  pick up; the stack installs neither that quest (`files/web_admin.quest`) nor
-  the `mysql_direct_query` binding it needs, so the row is queued and never
-  executed. Items, yang and level do work — those go straight to the database.
-  Detail in
-  [docker/README.md → What the panel can and cannot do here](docker/README.md#what-the-panel-can-and-cannot-do-here).
+- **The panel's Teleport and Running speed need a character who is in game.**
+  They work by writing a row into `player.web_admin_queue` for an in-game quest
+  to pick up, and there is no way to fake either one in the database. The quest
+  (`files/web_admin.quest`) and the `mysql_direct_query` binding it needs are
+  both installed by the build, but a character who is offline cannot be moved or
+  sped up by anything, so the panel refuses those two and says why. Items, yang
+  and level work either way — in game if the helper answers, straight to the
+  database if it does not. Detail in
+  [docker/README.md → What the panel can and cannot do here](docker/README.md#what-the-panel-can-and-cannot-do-here)
+  and [files/ADD_SQL_BINDING.md](../files/ADD_SQL_BINDING.md).
 - **`M2_INVENTORY_SLOTS` defaults to 45**, which is one inventory page; r40250
   has four. Set it to `180` in `.env` or the panel will decide a character's
   inventory is full when it is not.
@@ -109,7 +112,10 @@ format and database layout), so 32-bit it stayed — and stays. See
 1. **The FreeBSD build must keep working.** Every Linux change sits inside
    `__linux__` guards or `uname -s` build logic; the `_WIN32` and FreeBSD
    branches were not touched. Demonstrated, not asserted — see
-   [PORT40250.md](PORT40250.md#freebsd-build-proven-untouched).
+   [PORT40250.md](PORT40250.md#freebsd-build-proven-untouched). The one feature
+   in the patch (`M2_FEATURE quest-sql-binding`) is deliberately *not* guarded:
+   it is not platform-specific, and hiding it behind `__linux__` would mean the
+   two platforms no longer built the same server.
 2. **Verified over assumed.** A library that compiles but does not link, or an
    event loop that builds but misbehaves, costs more than it saves. Every step
    ended with something actually executed.

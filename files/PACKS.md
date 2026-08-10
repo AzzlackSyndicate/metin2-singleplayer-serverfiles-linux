@@ -30,11 +30,13 @@ So the file has two halves. Only one of them executes here:
 `pack_start_hint`. Sourcing the file does not run any of them, so their presence
 costs nothing at runtime.
 
-Two of those absences matter to anyone using the panel:
+Two of those absences are worth knowing about:
 
-- **`pack_install_quest` is never called**, so `web_admin.quest` never reaches
-  the game. That is why the panel's teleport and running-speed buttons do
-  nothing on a Docker deployment.
+- **`pack_install_quest` is never called.** It is not needed: the game image
+  installs `web_admin.quest` itself, in stage 2b of
+  `linux-port/docker/game/Dockerfile`, with a quest compiler it builds from the
+  same source tree as the cores. `pack_install_quest` assumes the FreeBSD
+  layout and the FreeBSD `qc`, neither of which exists here.
 - **`pack_secure_admin_accounts` is never called**, so the admin accounts that
   ship in the server files keep their published passwords until you change them
   yourself.

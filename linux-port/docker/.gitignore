@@ -6,6 +6,9 @@ client-builder/pack/pack.sh
 panel/app/
 panel/schema/
 mariadb/initdb.d/dumps/
+# The staged copy of files/web_admin.quest. The authoritative one is in files/.
+game/quest/*
+!game/quest/README
 
 # Server files an operator dropped in for the client builder: over a gigabyte,
 # and not ours to redistribute.

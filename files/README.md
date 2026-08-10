@@ -16,6 +16,7 @@ without changing that script too.
 | `items.json` | the `panel` image | ~9,800 items; what the give-item search looks through |
 | `favicon.png` | the `panel` image | browser tab icon |
 | `web_admin_schema.sql` | the `panel` image | the two tables the panel adds to the `player` database |
+| `web_admin.quest` | the `game` image | the panel's in-game helper; compiled during the build (see below) |
 | `packs/tmp4-r40250.pack` | the `game` **and** `client-builder` images | see below |
 
 `prepare-context.sh` refuses to run without `admin_panel.py` and warns (rather
@@ -52,27 +53,29 @@ Docker path actually uses.
 `web_admin.quest` and `speed_boost.quest` are Lua quest scripts for the game
 core.
 
-**Nothing in this repository installs them.** The Docker stack has no step that
-copies a quest into the game image or compiles one, and the game core built by
-the Linux port does not have the `mysql_direct_query` binding that
-`web_admin.quest` needs in the first place. They are here as source, for someone
-running the game some other way or willing to do the work by hand.
-
-The practical consequence is documented in [ADD_SQL_BINDING.md](ADD_SQL_BINDING.md)
-and in the repository [README](../README.md): on a Docker deployment the panel's
-**Teleport** and **Running speed** buttons do not work.
-
 - `web_admin.quest` — polls `web_admin_queue` and carries out the panel's
-  commands on a character who is in game.
-- `speed_boost.quest` — unrelated to the panel: gives every character +20%
-  running speed at login, as a server-wide setting.
+  commands on a character who is in game. **This one is installed by the
+  build.** `prepare-context.sh` stages it into the game build context and stage
+  2b of `linux-port/docker/game/Dockerfile` compiles it with a `qc` built from
+  the same source tree as the cores. The `mysql_direct_query` binding it calls
+  is part of the port patch — see
+  [ADD_SQL_BINDING.md](ADD_SQL_BINDING.md), which is also where to look if the
+  panel's **Teleport** or **Running speed** buttons are not working.
+- `speed_boost.quest` — unrelated to the panel, and **not** installed by
+  anything here: gives every character +20% running speed at login, as a
+  server-wide setting. It is source, for someone willing to install it by hand.
+
+To build a game image without the helper, delete `web_admin.quest` from the
+staged context (`linux-port/docker/game/quest/`) and rebuild. The build stage
+becomes a no-op and the panel falls back to writing items, yang and levels
+straight into the database, as it did before this existed.
 
 ## The documents
 
 | | |
 |---|---|
 | [PACKS.md](PACKS.md) | the pack-profile format, and which of it still runs |
-| [ADD_SQL_BINDING.md](ADD_SQL_BINDING.md) | the C++ change that would let a quest reach MySQL — what it buys, and what it costs |
+| [ADD_SQL_BINDING.md](ADD_SQL_BINDING.md) | `mysql_direct_query` — the one feature in the port patch: what it does, what a quest may ask it for, and how to check it is alive |
 | [ADDING_SHOP_ITEMS.md](ADDING_SHOP_ITEMS.md) | how NPC shop prices actually work, with a worked example |
 
 ## Running the panel by hand

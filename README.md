@@ -33,8 +33,9 @@ project, and this project cannot give you permission to use it.**
 
 This repository contains **only tooling** — the port, the packaging, the panel —
 and that tooling is MIT licensed. It contains **no game files and no game
-source**. The Linux port itself is a single 109 KB patch touching 28 files; the
-code it patches is fetched at install time from its own publisher's link.
+source**. Everything this project changes in the game server is a single 119 KB
+patch touching 30 files; the code it patches is fetched at install time from its
+own publisher's link.
 
 Running a private server is very likely a copyright infringement wherever you
 live. Small private servers are generally left alone; that is a risk you accept,
@@ -116,11 +117,11 @@ files/                  THE SHARED MATERIAL — panel, item index, server-files 
   items.json favicon.png  panel assets
   packs/tmp4-r40250.pack  the server-files profile: rate maths and client preparation
   web_admin_schema.sql    the two database tables the panel adds
-  web_admin.quest         the in-game side of the panel — NOT installed by anything here
-  speed_boost.quest       a standalone server-wide speed buff — likewise not installed
+  web_admin.quest         the in-game side of the panel — compiled into the game image
+  speed_boost.quest       a standalone server-wide speed buff — NOT installed by anything here
   README.md               what is in here and how the panel is configured
   PACKS.md                the pack-profile format
-  ADD_SQL_BINDING.md      the C++ change teleport and running speed would need
+  ADD_SQL_BINDING.md      mysql_direct_query: the one feature in the port patch
   ADDING_SHOP_ITEMS.md    how NPC shop prices actually work
 
 installer/              THE ONE-COMMAND INSTALLERS
@@ -128,7 +129,7 @@ installer/              THE ONE-COMMAND INSTALLERS
   install.ps1             Windows. Binds 127.0.0.1 only; creates no firewall rule.
 
 linux-port/             THE PORT — write-ups, the patch, then packaging
-  patches/0001-r40250-linux-port.patch    the port itself: 109 KB, 28 files
+  patches/0001-r40250-linux-port.patch    the port, plus one labelled feature: 119 KB, 30 files
   fetch-sources.sh        fetch the upstream package, apply the patch, stage the context
   README.md               why, how, and how far it got
   PORT40250.md            what the port does to the source, and why
@@ -212,15 +213,20 @@ format.
 Stated here rather than buried, because they change whether this is useful to
 you:
 
-- **Teleport and running speed do not work on a Docker deployment.** The panel
-  offers both. Both work by writing a row into `web_admin_queue` for an in-game
-  quest to pick up — and nothing in the Docker stack installs that quest, nor
-  does the ported game core have the `mysql_direct_query` binding the quest
-  needs. Clicking either button waits about seven seconds and then shows an
-  error saying the in-game helper did not answer. Nothing is changed and nothing
-  is corrupted, but the feature is not there. Items, yang and levels are written
-  straight to the database and do work. See
-  [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md).
+- **Teleport and running speed only work while the character is in game.** Both
+  work by writing a row into `web_admin_queue` for an in-game quest to pick up.
+  The quest is compiled into the game image and the `mysql_direct_query` binding
+  it needs is in the port patch, so the chain is there — but neither action can
+  be faked in the database for a character who is offline, so for those the
+  panel refuses and says why rather than queueing something nobody will run.
+  Items, yang and levels work either way. See
+  [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md), including how to check
+  the in-game helper is alive without a game client.
+- **The one feature in the port patch has not been tested with a player in it.**
+  `mysql_direct_query` and the quest that uses it are verified as far as they
+  can be without a game client: the cores load the quest, start its poll timer
+  at boot, and move a queued row out of `pending` on their own. Whether a
+  teleport actually moves a character has been reasoned about, not observed.
 - **The panel runs on Flask's development server.** Fine for the few people
   administering a private server; not a public web server. The Linux installer
   puts nginx in front of it when you give it a domain, which takes the worst

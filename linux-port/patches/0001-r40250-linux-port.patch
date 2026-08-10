@@ -21,10 +21,24 @@
 #      baseline above -- check the sha256, do not force the patch.
 #
 #  CONTENTS
-#      28 files, 64 hunks, +1742 / -40 lines.
+#      30 files, 68 hunks, +1999 / -40 lines.
 #      Build output is not in here (no .o, .a, .d, Depend.linux, OBJDIR/, .obj/,
 #      and neither of the linked game/db binaries), so a ported tree that has
 #      been compiled in produces exactly these bytes too.
+#
+#  WHAT IS NOT PART OF THE PORT
+#      A port changes no behaviour: the same source, running the same way, on a
+#      different operating system.  These additions do change behaviour -- each
+#      is a function the r40250 server never had -- so they are named here and
+#      marked `M2_FEATURE <name>' in the source they add:
+#
+#          quest-sql-binding
+#              game/src/questlua_global.cpp
+#              game/src/questmanager.cpp
+#
+#      Nothing else in here adds a feature.  To check that claim:
+#          grep -n 'M2_FEATURE' 0001-r40250-linux-port.patch
+#      Every hit must be one of the names above.
 #
 #  MADE BY
 #      ./make-patch.sh --pristine <fresh metin2/src/server> --ported <our server/>
@@ -1423,6 +1437,356 @@ diff -ruN -x '*.o' -x '*.a' -x '*.d' -x Makefile.dep -x '*.log' -x tags a/game/s
 +/* ### LINUX-BLOCK-END (packet.h time_t wire-format tripwires) ########### */
 +
  #endif
+diff -ruN -x '*.o' -x '*.a' -x '*.d' -x Makefile.dep -x '*.log' -x tags a/game/src/questlua_global.cpp b/game/src/questlua_global.cpp
+--- a/game/src/questlua_global.cpp
++++ b/game/src/questlua_global.cpp
+@@ -23,6 +23,7 @@
+ #include "guild.h"
+ #include "guild_manager.h" 
+ #include "sectree_manager.h"
++#include "db.h"			// M2_FEATURE quest-sql-binding
+ 
+ #undef sys_err
+ #ifndef __WIN32__
+@@ -1326,6 +1327,272 @@
+ 		}
+ 	}
+ 
++
++	// =====================================================================
++	// M2_FEATURE quest-sql-binding
++	//
++	// This is NOT part of the Linux port.  Everything else in the port
++	// patch exists to make 2014 FreeBSD code compile and run on Linux and
++	// changes no behaviour; this block adds a function the original server
++	// never had.  It is here so that the web admin panel's in-game helper
++	// (share/locale/<lang>/quest/web_admin.quest) can read the panel's
++	// command queue and write a result back.  See files/ADD_SQL_BINDING.md.
++	//
++	// Deliberately plain, portable C++: the same tree still has to build on
++	// FreeBSD, so there is no #ifdef __linux__ in here and there must not be.
++	//
++	// mysql_direct_query(query_string)
++	//
++	//   SELECT ...   -> a table of rows.  Each row is itself a table whose
++	//                   keys are the column names, e.g. rows[1].player_name.
++	//                   Values are always strings (that is what MySQL hands
++	//                   us); use tonumber() in the quest for numbers.
++	//                   rows.n holds the row count, so table.getn() works
++	//                   under the Lua 5.0.3 this source ships with.
++	//   UPDATE ...   -> a number: how many rows were changed.
++	//   refused or error -> nil.
++	//
++	// WHAT A QUEST MAY ASK FOR -- see wa_query_is_allowed() below.  The
++	// panel only ever needs to read one table and write a status back, so
++	// that is all this binding will pass through.  Without that restriction
++	// this function would hand every quest on the server unrestricted SQL
++	// access to accounts, characters and items; read section 5 of
++	// ADD_SQL_BINDING.md before widening it.
++	// =====================================================================
++
++#define WEB_ADMIN_QUEUE_TABLE	"web_admin_queue"
++
++	static bool wa_is_ident_char(char c)
++	{
++		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
++		    || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '$';
++	}
++
++	static bool wa_is_space(char c)
++	{
++		return c == ' ' || c == '\t' || c == '\r' || c == '\n';
++	}
++
++	static char wa_lower(char c)
++	{
++		return (c >= 'A' && c <= 'Z') ? (char) (c - 'A' + 'a') : c;
++	}
++
++	static bool wa_iequal(const char * a, const char * b, size_t n)
++	{
++		for (size_t i = 0; i < n; ++i)
++			if (wa_lower(a[i]) != wa_lower(b[i]))
++				return false;
++
++		return true;
++	}
++
++	// Whole-word, case-insensitive match of `word' starting at p.
++	// "fromage" must not match "from", hence the trailing check.
++	static bool wa_word_at(const char * p, const char * word)
++	{
++		size_t i = 0;
++
++		for (; word[i] != '\0'; ++i)
++			if (wa_lower(p[i]) != wa_lower(word[i]))
++				return false;
++
++		return !wa_is_ident_char(p[i]);
++	}
++
++	// The doorman.  Returns true only for statements that cannot touch
++	// anything except the panel's own queue table.
++	//
++	// The rules, and why each one is here:
++	//
++	//   1. One statement only.  A ';' with anything after it is refused, so
++	//      "read the queue; drop the accounts" cannot be smuggled in.
++	//   2. No comment introducers (-- , #, /*).  They are how a second
++	//      intent gets hidden from a check like this one.
++	//   3. The statement must begin with SELECT or UPDATE.  Reading the
++	//      queue and writing a status back is the whole of what the panel
++	//      needs; DELETE, INSERT, DROP, GRANT and friends never get here.
++	//   4. Every keyword that can name a table -- FROM, JOIN, UPDATE, INTO,
++	//      TABLE -- must be followed by our queue table.  A subquery needs
++	//      its own FROM to read a table, so this covers subqueries too, and
++	//      INTO OUTFILE is refused by the same rule.
++	//   5. LOAD_FILE is refused by name.  It reads a file rather than a
++	//      table, so rule 4 does not see it.  This one is a denylist entry
++	//      and is honest about being one: it is not a proof that nothing
++	//      else can reach outside the database, only the closing of the one
++	//      hole worth closing.  A quest you did not write is still a quest
++	//      you are running.
++	//
++	// To lift the restriction on a server where you write every quest
++	// yourself, make this function `return true;' -- and nothing else.
++	static bool wa_query_is_allowed(const char * q)
++	{
++		const char * p;
++
++		// DBManager::DirectQuery formats into a fixed 4096-byte buffer and
++		// truncates in silence.  A truncated statement is a different
++		// statement, so a long one is refused rather than cut.
++		if (strlen(q) > 3900)
++			return false;
++
++		for (p = q; *p != '\0'; ++p)
++		{
++			if (*p == ';')
++			{
++				const char * t = p + 1;
++
++				while (*t != '\0' && wa_is_space(*t))
++					++t;
++
++				if (*t != '\0')
++					return false;
++			}
++
++			if (p[0] == '#')
++				return false;
++
++			if (p[0] == '-' && p[1] == '-')
++				return false;
++
++			if (p[0] == '/' && p[1] == '*')
++				return false;
++		}
++
++		p = q;
++
++		while (*p != '\0' && wa_is_space(*p))
++			++p;
++
++		if (!wa_word_at(p, "select") && !wa_word_at(p, "update"))
++			return false;
++
++		for (p = q; *p != '\0'; ++p)
++		{
++			const char *	kw;
++			const char *	t;
++			const char *	s;
++			const char *	tail;
++			size_t		n;
++
++			if (p != q && wa_is_ident_char(p[-1]))
++				continue;
++
++			if (wa_word_at(p, "load_file"))
++				return false;
++
++			if      (wa_word_at(p, "from"))		kw = "from";
++			else if (wa_word_at(p, "join"))		kw = "join";
++			else if (wa_word_at(p, "update"))	kw = "update";
++			else if (wa_word_at(p, "into"))		kw = "into";
++			else if (wa_word_at(p, "table"))	kw = "table";
++			else					continue;
++
++			t = p + strlen(kw);
++
++			while (*t != '\0' && wa_is_space(*t))
++				++t;
++
++			s = t;
++
++			while (*t != '\0' && wa_is_ident_char(*t))
++				++t;
++
++			n = (size_t) (t - s);
++
++			if (n < sizeof(WEB_ADMIN_QUEUE_TABLE) - 1)
++				return false;
++
++			// Accept `web_admin_queue' and `<database>.web_admin_queue',
++			// and nothing whose name merely ends in those letters.
++			tail = t - (sizeof(WEB_ADMIN_QUEUE_TABLE) - 1);
++
++			if (!wa_iequal(tail, WEB_ADMIN_QUEUE_TABLE, sizeof(WEB_ADMIN_QUEUE_TABLE) - 1))
++				return false;
++
++			if (tail != s && tail[-1] != '.')
++				return false;
++
++			p = t - 1;
++		}
++
++		return true;
++	}
++
++	int _mysql_direct_query(lua_State* L)
++	{
++		if (!lua_isstring(L, 1))
++		{
++			sys_err("mysql_direct_query: argument 1 must be a query string");
++			lua_pushnil(L);
++			return 1;
++		}
++
++		const char * c_pszQuery = lua_tostring(L, 1);
++
++		if (!wa_query_is_allowed(c_pszQuery))
++		{
++			sys_err("mysql_direct_query: refused (only " WEB_ADMIN_QUEUE_TABLE " may be read or updated): %s", c_pszQuery);
++			lua_pushnil(L);
++			return 1;
++		}
++
++		// DBManager::DirectQuery is printf-style (it does vsnprintf
++		// internally).  The query text must therefore be passed as an
++		// ARGUMENT, never as the format string -- otherwise a '%' anywhere
++		// in the query would be read as a format specifier and corrupt it.
++		std::unique_ptr<SQLMsg> pmsg(DBManager::instance().DirectQuery("%s", c_pszQuery));
++
++		if (!pmsg.get() || pmsg->uiSQLErrno != 0 || !pmsg->Get())
++		{
++			// DirectQuery has already written the MySQL error to syserr.
++			lua_pushnil(L);
++			return 1;
++		}
++
++		SQLResult * pRes = pmsg->Get();
++
++		// No result set -> this was not a SELECT.  Report affected rows.
++		if (!pRes->pSQLResult)
++		{
++			lua_pushnumber(L, pRes->uiAffectedRows);
++			return 1;
++		}
++
++		MYSQL_FIELD *	pFields	= mysql_fetch_fields(pRes->pSQLResult);
++		unsigned int	uiFields = mysql_num_fields(pRes->pSQLResult);
++
++		lua_newtable(L);			// outer table: the list of rows
++
++		MYSQL_ROW row;
++		int iRow = 0;
++
++		while ((row = mysql_fetch_row(pRes->pSQLResult)))
++		{
++			++iRow;
++
++			lua_pushnumber(L, iRow);	// outer key: 1, 2, 3, ...
++			lua_newtable(L);		// inner table: this one row
++
++			for (unsigned int i = 0; i < uiFields; ++i)
++			{
++				lua_pushstring(L, pFields[i].name);
++				lua_pushstring(L, row[i] ? row[i] : "");
++				lua_settable(L, -3);	// row[column_name] = value
++			}
++
++			lua_settable(L, -3);		// rows[iRow] = row
++		}
++
++		// Lua 5.0 uses the 'n' field for table.getn().  Set it explicitly so
++		// the row count is exact, including for an empty result.
++		lua_pushstring(L, "n");
++		lua_pushnumber(L, iRow);
++		lua_settable(L, -3);
++
++		return 1;
++	}
++	// ================= end M2_FEATURE quest-sql-binding ===================
++
+ 	void RegisterGlobalFunctionTable(lua_State* L)
+ 	{
+ 		extern int quest_setstate(lua_State* L);
+@@ -1411,6 +1678,9 @@
+ 			{	"purge_area",					_purge_area						},
+ 			{	"warp_all_in_area_to_area",		_warp_all_in_area_to_area		},
+ 
++			// M2_FEATURE quest-sql-binding -- not part of the Linux port
++			{	"mysql_direct_query",			_mysql_direct_query				},
++
+ 			{	NULL,	NULL	}
+ 		};
+ 	
+diff -ruN -x '*.o' -x '*.a' -x '*.d' -x Makefile.dep -x '*.log' -x tags a/game/src/questmanager.cpp b/game/src/questmanager.cpp
+--- a/game/src/questmanager.cpp
++++ b/game/src/questmanager.cpp
+@@ -145,6 +145,52 @@
+ 			SetEventFlag("guild_withdraw_delay", 3);
+ 			SetEventFlag("guild_disband_delay", 7);
+ 		}
++
++		// =============================================================
++		// M2_FEATURE quest-sql-binding
++		//
++		// Start the web admin panel's in-game helper.
++		//
++		// A quest can only start a server timer from inside an event, and
++		// the only event that fits is `login'.  That leaves a core nobody
++		// has logged into yet with no helper running at all -- and from
++		// the outside that is indistinguishable from a build where the
++		// helper is missing or broken: rows sit in the panel's queue at
++		// `pending' and nothing ever moves them.  It also means that the
++		// one check an operator can make without a game client -- put a
++		// row in the queue and watch it move -- cannot be trusted to mean
++		// anything.
++		//
++		// It has to be HERE, at the end of Initialize(), and not in
++		// InitializeLua() where the quests are loaded: server_loop_timer
++		// reaches LoadTimerScript -> NPC::Set, which walks m_mapEventName,
++		// and that map is filled a hundred lines above this comment --
++		// from InitializeLua() it is still empty, so the timer would be
++		// created with no script attached and would tick forever doing
++		// nothing.  That failure is silent; this comment is the warning.
++		//
++		// __wa_armed is the flag the quest's own login handler tests, so
++		// setting it here stops that handler starting a second timer.
++		//
++		// This is not part of the Linux port. See files/ADD_SQL_BINDING.md.
++		// =============================================================
++		if (GetQuestIndexByName("web_admin") != 0)
++		{
++			extern int _set_server_loop_timer(lua_State * L);
++
++			sys_log(0, "QUEST: web_admin helper installed -- starting its 5s poll timer");
++
++			lua_pushboolean(L, 1);
++			lua_setglobal(L, "__wa_armed");
++
++			lua_settop(L, 0);
++			lua_pushstring(L, "wa_tick");
++			lua_pushnumber(L, 5);
++			lua_pushnumber(L, 0);
++			_set_server_loop_timer(L);
++			lua_settop(L, 0);
++		}
++
+ 		return true;
+ 	}
+ 
 diff -ruN -x '*.o' -x '*.a' -x '*.d' -x Makefile.dep -x '*.log' -x tags a/game/src/stdafx.h b/game/src/stdafx.h
 --- a/game/src/stdafx.h
 +++ b/game/src/stdafx.h

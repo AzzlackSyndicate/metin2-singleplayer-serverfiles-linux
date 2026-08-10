@@ -15,6 +15,9 @@
 #      game/src/server/                the eight modules
 #      game/src/serverfiles/share/     conf/ data/ locale/ package/
 #      game/src/serverfiles/mark-default/
+#      game/quest/web_admin.quest      the admin panel's in-game helper; the
+#                                      game image compiles it into every locale
+#                                      it finds (see game/Dockerfile, stage 2b)
 #      panel/app/                      admin_panel.py, items.json, favicon.png
 #      panel/app/VERSION               the repository's VERSION -- this is what
 #                                      makes the running panel able to say which
@@ -183,6 +186,28 @@ if [ -f "$REPO_ROOT/CHANGELOG.md" ]; then
 else
   info "WARNING: $REPO_ROOT/CHANGELOG.md not found -- the panel's patch log will"
   info "         have nothing to show for the version you are running."
+fi
+
+# -----------------------------------------------------------------------------
+say "in-game helper quest"
+# web_admin.quest is what makes the panel's Teleport and Running speed buttons
+# work, and what makes items, yang and levels arrive immediately instead of at
+# the player's next login. It is staged into the GAME context, not the panel's:
+# the quest runs inside the game cores, and the game image compiles it (stage
+# 2b of game/Dockerfile) with a qc built from the same source tree.
+#
+# Without it the panel still works -- it falls back to writing straight into the
+# database after a short wait -- so a missing file is a warning, not a failure.
+mkdir -p "$HERE/game/quest"
+if [ -f "$PANEL_SRC/web_admin.quest" ]; then
+  cp -a "$PANEL_SRC/web_admin.quest" "$HERE/game/quest/web_admin.quest"
+  info "web_admin.quest -> game/quest/"
+else
+  rm -f "$HERE/game/quest/web_admin.quest"
+  info "WARNING: $PANEL_SRC/web_admin.quest not found -- the panel's Teleport"
+  info "         and Running speed buttons will report that the in-game helper"
+  info "         did not answer, and item/yang/level will take the slower"
+  info "         database route."
 fi
 
 if [ -f "$PANEL_SRC/web_admin_schema.sql" ]; then

@@ -17,6 +17,28 @@ every version here.
 
 ---
 
+## 1.3.0 — 2026-08-10
+
+### Added
+
+- Teleport and running speed work. The helper that carries them out is now
+  built and installed with the server.
+- Items, yang and levels reach a character who is logged in straight away,
+  instead of at their next login.
+
+### Fixed
+
+- On a Linux host the game could start with no quests loaded at all, and still
+  report itself healthy. Staged quest files could carry permissions the server
+  account could not read.
+
+### Security
+
+- The database function the helper uses accepts only statements against the
+  panel's own queue table.
+
+---
+
 ## 1.2.3 — 2026-08-10
 
 ### Fixed
@@ -34,8 +56,9 @@ every version here.
 - Giving an item, yang or a level to a character who is logged in no longer
   claims they were not in game. It says the change was written to the account
   and appears at their next login.
-- Teleport and running speed now say this build has no in-game helper, instead
-  of suggesting the game server might be down.
+- Teleport and running speed now say that nothing in the game answered and
+  that nothing was changed, instead of suggesting the game server might be
+  down.
 
 ---
 

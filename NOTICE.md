@@ -13,10 +13,10 @@ Everything in this repository that was written for this project:
 | `files/admin_panel.py` | the web admin panel |
 | `files/items.json` | the panel's item index |
 | `files/packs/*.pack` | the server-file profiles |
-| `files/web_admin.quest`, `files/speed_boost.quest` | the panel's in-game bridge, and a standalone speed buff |
+| `files/web_admin.quest`, `files/speed_boost.quest` | the panel's in-game bridge (compiled into the game image), and a standalone speed buff |
 | `files/web_admin_schema.sql` | the two tables the panel adds |
 | `installer/install.sh`, `installer/install.ps1` | the one-command installers |
-| `linux-port/patches/*.patch` | the Linux port itself |
+| `linux-port/patches/*.patch` | the Linux port itself, and the `mysql_direct_query` quest binding |
 | `linux-port/fetch-sources.sh`, `linux-port/patches/make-patch.sh` | the scripts that acquire and regenerate it |
 | `linux-port/*.md` | the Linux porting write-ups |
 | `linux-port/docker/` | the Docker packaging |

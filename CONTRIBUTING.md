@@ -38,12 +38,18 @@ player did.
 | Container plumbing | `linux-port/docker/` | the stack |
 | The one-command installers | `installer/install.sh`, `installer/install.ps1` | keep them in step — they are the same install described twice |
 | Acquiring and staging the upstream source | `linux-port/fetch-sources.sh` | both installers call it |
-| The in-game bridge | `files/web_admin.quest` | nothing, today — nothing installs it |
+| The in-game bridge | `files/web_admin.quest` | the game image — it is staged and compiled at build time |
 
-The last row is not a joke: `web_admin.quest` is real, correct source that no
-part of this repository puts into a game. Read the *Teleport and running speed*
-note in [README.md](README.md) before changing it, so you know what you are and
-are not testing.
+The last row has a trap in it. `web_admin.quest` is compiled during the image
+build by a `qc` built from the same source, and `qc` refuses any function name
+that is not listed in `quest_functions` — with the message "Calls undeclared
+function!" and nothing about which name it means. It also refuses helper
+functions of your own, calls through a variable, and `sys_err`. The rules are
+written out at the top of the quest file; keep it inside them, and rebuild the
+game image (not just restart it) to test a change. Read
+[files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md) first — particularly
+section 5, which is the list of what the quest is allowed to ask the database
+for.
 
 ## Testing a change
 

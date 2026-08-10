@@ -1,12 +1,19 @@
 -- =============================================================
 -- web_admin.quest  -  applies the admin panel's commands in game
 --
--- NOTHING IN THIS REPOSITORY INSTALLS THIS FILE. The Docker stack
--- has no step that copies a quest into the game image or compiles
--- one, so on a Docker deployment the panel's Teleport and Running
--- speed buttons do not work. See ADD_SQL_BINDING.md section 0.
+-- ------------------------------------------------------------------
+-- WHERE THIS FILE GOES
+-- ------------------------------------------------------------------
+-- On the Docker stack you do not install it: prepare-context.sh stages
+-- it into the game build context and stage 2b of docker/game/Dockerfile
+-- compiles it, with a qc built from the same source as the cores. To
+-- change it, edit THIS file and rebuild the game image -- editing the
+-- copy inside a running container is lost on the next recreate.
 --
--- To install it by hand, on TMP4 r40250:
+-- By hand, on TMP4 r40250:
+--     cp web_admin.quest share/locale/<lang>/quest/
+--     echo mysql_direct_query >> share/locale/<lang>/quest/quest_functions
+--     echo web_admin.quest    >> share/locale/<lang>/quest/locale_list
 --     cd share/locale/<lang>/quest && python2.7 make.py
 -- Other server files put the quest tree elsewhere -- look for make.py.
 --
@@ -14,14 +21,20 @@
 -- WHAT THIS NEEDS TO WORK
 -- ------------------------------------------------------------------
 -- It reads the panel's command table with mysql_direct_query(). Stock
--- Metin2 sources do NOT give quests any way to reach MySQL, so that
--- function has to be added to the game core first — see
--- ADD_SQL_BINDING.md next to this file. The Linux port does not
--- contain that change either, so on Docker both pieces are missing.
+-- Metin2 sources do NOT give quests any way to reach MySQL; the port
+-- patch adds that one function, and it will only pass through
+-- statements that touch web_admin_queue and nothing else. See
+-- ADD_SQL_BINDING.md next to this file, section 5, before adding a
+-- query here -- anything wider is refused and logged to syserr.
 --
--- Without it the panel still works: items, yang and levels are written
--- straight into the database instead. Only teleport and running speed
--- genuinely need this quest.
+-- On a core built without it the panel still works: items, yang and
+-- levels are written straight into the database instead. Only teleport
+-- and running speed genuinely need this quest.
+--
+-- The 5-second poll timer is started by the core at boot (see
+-- CQuestManager::Initialize), not only by the login handler below, so
+-- the helper is running on a server nobody has logged into yet. That is
+-- what makes it possible to check it works without a game client.
 --
 -- ------------------------------------------------------------------
 -- RULES THE QUEST COMPILER ENFORCES (learned the hard way)

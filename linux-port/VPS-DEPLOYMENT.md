@@ -285,25 +285,25 @@ since it only ever builds r40250.
 3. ~~**Rate changes from the panel** need `apply_rates.sh`, which is
    FreeBSD-shaped.~~ **Closed** — see [Server rates](#server-rates) below,
    proven end to end on this box.
-4. **Teleport and running speed from the panel still do not work**, and on the
-   container stack there are two reasons rather than one:
-   - the stack never installs `files/web_admin.quest`. Nothing in
-     `linux-port/docker/` copies or compiles it, so the quest that polls
-     `player.web_admin_queue` and carries the commands out in game is simply not
-     there;
-   - and even if it were, it calls `mysql_direct_query()`, which stock Metin2
-     does not expose to quests. The FreeBSD installer offers to patch that
-     binding into the core (`files/ADD_SQL_BINDING.md`); **the Linux port patch
-     does not contain it** — zero occurrences.
+4. ~~**Teleport and running speed from the panel do not work.**~~ **Closed in the
+   build, not yet confirmed on this box.** Both halves are now in:
+   - the game image stages and compiles `files/web_admin.quest` (stage 2b of
+     `docker/game/Dockerfile`), with a `qc` built from the same source as the
+     cores, because the `qc` in the server files is a FreeBSD binary;
+   - the port patch carries the `mysql_direct_query` binding the quest calls,
+     marked `M2_FEATURE quest-sql-binding` and named in the patch header as the
+     one thing in there that is not part of the port
+     (`files/ADD_SQL_BINDING.md`).
 
-   The effect for an operator: pressing Teleport or Running speed writes a row
-   into `web_admin_queue` that nothing ever executes. It queues and stays
-   queued. **Items, yang and level do work** — those go straight to the database
-   and need only a relog.
+   Verified on a throwaway stack on a development machine: the cores load the
+   quest, start its poll timer at boot, and move a queued row out of `pending`
+   within about 35 seconds. **Not yet verified with a real character in game,
+   and not yet verified on this server.** Before believing it here, redeploy and
+   run the queue check in `ADD_SQL_BINDING.md` section 4 — it needs nothing but
+   a database prompt.
 
-   Closing this means doing both: staging the quest into the game image and
-   compiling it (`share/locale/<lang>/quest`, `python2.7 make.py`), and adding
-   `mysql_direct_query` to the core and to `quest_functions`. Neither is done.
+   **Items, yang and level worked before and still do**: in game when the helper
+   answers, straight to the database when it does not.
 
 ## Server rates
 

@@ -498,33 +498,36 @@ containers](#server-rates-across-two-containers).
 
 ## What the panel can and cannot do here
 
-Two of the panel's per-character actions **do not work on this stack**, and they
-fail quietly, which is worse than failing loudly:
+All five per-character actions work — but two of them need the character to be
+**in game**, and there is no way around that:
 
-| Action | Works? |
-|---|---|
-| Give items | yes |
-| Give yang | yes |
-| Set level | yes |
-| **Teleport** | **no** |
-| **Running speed** | **no** |
+| Action | Character in game | Character offline |
+|---|---|---|
+| Give items | delivered in game, immediately | written to the database; appears at next login |
+| Give yang | delivered in game, immediately | written to the database; appears at next login |
+| Set level | delivered in game, immediately | written to the database; appears at next login |
+| **Teleport** | works | **refused, and the panel says why** |
+| **Running speed** | works | **refused, and the panel says why** |
 
-The three that work are written straight into the database, so they need nothing
-from the game — the player only has to relog to see them.
+The in-game route is a quest, `files/web_admin.quest`, which polls
+`player.web_admin_queue` every five seconds and carries the command out on the
+live character. **The build installs it**: `prepare-context.sh` stages it and
+stage 2b of `game/Dockerfile` compiles it with a `qc` built from the same source
+tree as the cores. The `mysql_direct_query` binding it calls is in the port
+patch — it is the one thing in that patch which is not part of the port, and the
+patch's header says so.
 
-The two that do not work go the other way round: the panel writes a row into
-`player.web_admin_queue`, and a quest inside the game (`files/web_admin.quest`)
-is supposed to poll that table every five seconds and carry the command out on
-the live character. **This stack never installs that quest.** Nothing in
-`linux-port/docker/` copies or compiles it. And it would not run if it were
-there: the quest calls `mysql_direct_query()`, which stock Metin2 does not give
-quests, and the Linux port patch does not add that binding either. The FreeBSD
-installer offers to patch it into the core; this path has no equivalent.
+Teleport and running speed cannot be faked in the database. The map a coordinate
+belongs to is not stored anywhere the panel could look up, so writing raw x/y
+could drop a character into empty space; a speed buff is a temporary in-memory
+effect with nothing to write at all. For an offline character the panel
+therefore refuses those two, out loud, instead of queueing something nobody will
+execute.
 
-So pressing Teleport or Running speed enqueues a request that nothing ever
-executes. Nothing breaks, nothing is logged, and nothing happens. If you need
-those two, the FreeBSD installer in `files/` is currently the only path that has
-them.
+To check the helper is alive without a game client, put a row in the queue by
+hand and watch it move — the procedure is in
+[files/ADD_SQL_BINDING.md](../../files/ADD_SQL_BINDING.md) section 4. A row that
+is still `pending` a minute later means the helper is not running.
 
 ---
 
