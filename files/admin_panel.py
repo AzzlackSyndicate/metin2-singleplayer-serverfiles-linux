@@ -1756,6 +1756,43 @@ def rate_limited(bucket, limit, window):
 
 RATE = {}
 
+# The item index carries German names with a few English and Turkish keywords
+# beside them, and more than half the entries have no keywords at all. Real
+# names in other languages live inside the client's encrypted packs, which is a
+# project of its own -- so instead the query is translated on the way in.
+#
+# Only word parts that actually occur in this index, taken from counting them,
+# and only ones with an unambiguous everyday translation. It is a search box:
+# a word too many costs a place in the ranking, not a wrong answer.
+_DE = {
+    "sword":"schwert", "dagger":"dolch", "bow":"bogen", "bell":"glocke",
+    "fan":"fächer", "armor":"panzer", "armour":"panzer", "helmet":"helm",
+    "shield":"schild", "shoes":"schuhe", "boots":"schuhe", "bracelet":"armband",
+    "necklace":"halskette", "earring":"ohrring", "ring":"ring",
+    "stone":"stein", "book":"buch", "chest":"truhe", "box":"truhe",
+    "potion":"trank", "elixir":"elixier", "scroll":"rolle", "key":"schlüssel",
+    "moon":"mond", "full":"voll", "half":"halb", "dragon":"drachen",
+    "fire":"feuer", "ice":"eis", "earth":"erd", "wind":"wind",
+    "lightning":"blitz", "dark":"dunkl", "light":"licht", "holy":"heilig",
+    "red":"rot", "blue":"blau", "green":"grün", "black":"schwarz",
+    "white":"weiß", "brown":"braun", "yellow":"gelb", "silver":"silber",
+    "gold":"gold", "iron":"eisen", "steel":"stahl", "wood":"holz",
+    "clothes":"kleidung", "shirt":"trikot", "hair":"frisur", "talisman":"talisman",
+    "horse":"pferd", "wolf":"wolf", "tiger":"tiger", "spirit":"geist",
+    "soul":"seele", "blood":"blut", "bone":"knochen", "skull":"schädel",
+    "flower":"blume", "leaf":"blatt", "seed":"samen", "egg":"ei",
+    "small":"klein", "big":"groß", "great":"groß", "old":"alt", "new":"neu",
+}
+def expand_query(words):
+    """The words typed, plus the German ones they probably mean."""
+    out = []
+    for w in words:
+        out.append(w)
+        de = _DE.get(w)
+        if de and de not in out:
+            out.append(de)
+    return out
+
 @app.route("/api/items")
 def api_items():
     """Live item search for the give-item box. Returns up to 40 matches."""
@@ -1763,16 +1800,35 @@ def api_items():
         return jsonify([])
     q = request.args.get("q", "").strip().lower()
     cat = request.args.get("cat", "all")
+
+    # Word by word, not the whole box as one string. The names in the index are
+    # German; the English and Turkish words are keywords beside them, so
+    # "Vollmondschwert" is one string but "Full Moon Sword" is three, and only
+    # two of them are in the index. Matching the phrase found nothing and the
+    # box looked broken to anybody not typing German.
+    #
+    # Items are ranked by how many of the typed words they match, so the more
+    # of the name somebody gets right the higher the item they meant climbs --
+    # and a word the index has never heard of costs a place instead of hiding
+    # everything.
+    words = [w for w in expand_query(q.split()) if w]
     out = []
     for it in ITEMS:
         if cat != "all" and it["c"] != cat:
             continue
-        if q and q not in it["n"].lower() and q not in it.get("k", "") and q != str(it["v"]):
+        if not words:
+            out.append((0, it["v"], it))
             continue
-        out.append(it)
-        if len(out) >= 40:
-            break
-    return jsonify(out)
+        if q == str(it["v"]):                 # an exact vnum always wins
+            out.append((-99, it["v"], it))
+            continue
+        hay = it["n"].lower() + " " + it.get("k", "")
+        hits = sum(1 for w in words if w in hay)
+        if hits:
+            out.append((-hits, it["v"], it))
+
+    out.sort(key=lambda r: (r[0], r[1]))
+    return jsonify([r[2] for r in out[:40]])
 
 @app.route("/api/status")
 def api_status():

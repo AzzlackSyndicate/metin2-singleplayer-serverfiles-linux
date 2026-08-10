@@ -17,6 +17,17 @@ every version here.
 
 ---
 
+## 1.3.3 — 2026-08-10
+
+### Fixed
+
+- The item search works in English and Turkish. It matched the whole box
+  against German names, so "Full Moon Sword" found nothing while
+  "Vollmondschwert" worked. It now matches word by word, translates the common
+  ones, and ranks by how many words fit.
+
+---
+
 ## 1.3.2 — 2026-08-10
 
 ### Fixed
