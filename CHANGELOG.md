@@ -17,6 +17,18 @@ every version here.
 
 ---
 
+## 1.4.0 — 2026-08-10
+
+### Added
+
+- The panel's in-game actions work. Items, yang and levels reach a character
+  who is logged in straight away instead of at their next login, and teleport
+  and running speed work at all.
+
+Set `M2_INGAME_HELPER=0` in `.env` to leave the helper out.
+
+---
+
 ## 1.3.4 — 2026-08-10
 
 ### Fixed
