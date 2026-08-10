@@ -97,6 +97,7 @@ INSTALL_DIR="${M2_INSTALL_DIR:-/opt/metin2/stack}"
 PUBLIC_ADDRESS="${M2_PUBLIC_ADDRESS:-}"
 DOMAIN="${M2_DOMAIN:-}"
 TLS_EMAIL="${M2_TLS_EMAIL:-}"
+DROP_DOMAIN=0   # --no-domain: forget the domain an earlier run set up
 AUTH_PORT="${M2_AUTH_PORT:-11000}"
 GAME_PORTS="${M2_GAME_PORT_RANGE:-13000-13002}"
 PANEL_PORT="${M2_PANEL_PUBLIC_PORT:-7788}"
@@ -340,6 +341,8 @@ usage() {
                           for the admin panel via Let's Encrypt.
     --email ADDR          e-mail for the Let's Encrypt account (needed with
                           --domain; only used for expiry warnings)
+    --no-domain           drop the domain this server was set up with and go
+                          back to plain HTTP on its address
     --local               bind everything to 127.0.0.1 and touch no firewall.
                           Only this machine can reach the server. For trying
                           it out; not for a real server.
@@ -376,6 +379,7 @@ parse_args() {
             --yes|-y)        ASSUME_YES=1; shift ;;
             --dry-run)       DRY_RUN=1; shift ;;
             --local)         LOCAL_ONLY=1; shift ;;
+            --no-domain)     DOMAIN=""; DROP_DOMAIN=1; shift ;;
             --no-client)     SKIP_CLIENT=1; shift ;;
             --no-firewall)   SKIP_FIREWALL=1; shift ;;
             --address)       PUBLIC_ADDRESS="${2:-}"; shift 2 ;;
@@ -1119,6 +1123,44 @@ choose_address() {
         return 0
     fi
 
+    # An update: the address is already in .env, and a server's address does not
+    # change because a new version came out. Asking again is noise -- and the
+    # kind of noise where a distracted Enter on a freshly detected value quietly
+    # repoints every player's client at the wrong place.
+    #
+    # Unless the machine really did move: a restored snapshot, a migrated VPS, a
+    # new address from the provider. That is worth interrupting for, so the
+    # stored value is checked against what this machine answers on now, and the
+    # question is only asked when the two disagree.
+    if [ "$FRESH_INSTALL" = "0" ] && [ -z "$PUBLIC_ADDRESS" ]; then
+        _known=$(env_get "$INSTALL_DIR/.env" M2_PUBLIC_ADDRESS || true)
+        if [ -n "$_known" ]; then
+            _now=$(detect_public_address || true)
+            if [ -n "$_now" ] && [ "$_now" != "$_known" ]; then
+                warn "Your server sends players to $_known,"
+                warn "but this machine answers on $_now."
+                say ""
+                say "If the machine moved or its address changed, take the new"
+                say "one. If $_known is a domain name, or an address that"
+                say "points here by another route, keep it."
+                say ""
+                if ask_yes_no "Send players to $_now from now on?" "n"; then
+                    PUBLIC_ADDRESS="$_now"
+                else
+                    PUBLIC_ADDRESS="$_known"
+                fi
+            else
+                PUBLIC_ADDRESS="$_known"
+            fi
+            good "Players connect to: $PUBLIC_ADDRESS"
+            say "Kept from your settings. To change it, run the installer with"
+            say "--address, or edit M2_PUBLIC_ADDRESS in $INSTALL_DIR/.env"
+            return 0
+        fi
+        # No stored address -- an install from before this key existed. Fall
+        # through and ask, exactly as a first install does.
+    fi
+
     if [ -z "$PUBLIC_ADDRESS" ]; then
         say "Working out this machine's public address..."
         PUBLIC_ADDRESS=$(detect_public_address || true)
@@ -1151,6 +1193,23 @@ choose_address() {
 choose_domain() {
     [ "$LOCAL_ONLY" = "1" ] && return 0
     [ -n "$DOMAIN" ] && return 0
+
+    # Same reasoning as the address above: on an update we already know. Here it
+    # matters more, because the prompt's default is empty -- an operator who
+    # updates and presses Enter would answer "no domain" for a server that has
+    # one, and lose HTTPS in the process.
+    if [ "$FRESH_INSTALL" = "0" ] && [ "$DROP_DOMAIN" = "0" ]; then
+        _d=$(env_get "$INSTALL_DIR/.env" M2_DOMAIN || true)
+        if [ -n "$_d" ]; then
+            DOMAIN="$_d"
+            [ -n "$TLS_EMAIL" ] || TLS_EMAIL=$(env_get "$INSTALL_DIR/.env" M2_TLS_EMAIL || true)
+            step "A domain name for the admin panel"
+            good "Using: $DOMAIN"
+            say "Kept from your settings. To drop it, run with --no-domain."
+            return 0
+        fi
+    fi
+
     [ "$ASSUME_YES" = "1" ] && return 0
     [ -r /dev/tty ] || return 0
 
@@ -1276,6 +1335,14 @@ write_env() {
     env_set "$_env" M2_PUBLIC_ADDRESS "$PUBLIC_ADDRESS"
     env_set "$_env" M2_AUTH_PORT      "$AUTH_PORT"
     env_set "$_env" M2_GAME_PORT_RANGE "$GAME_PORTS"
+
+    # Nothing in the stack reads these two -- nginx and certbot are configured
+    # from files, not from here. They are written so the NEXT run of this
+    # installer can find them: without them an update has no idea the server
+    # ever had a domain, and re-running the plain one-liner would take the
+    # certificate away from a server that had HTTPS.
+    env_set "$_env" M2_DOMAIN    "$DOMAIN"
+    env_set "$_env" M2_TLS_EMAIL "$TLS_EMAIL"
 
     # Tell the panel whether anybody but this machine can reach the server, so
     # its introduction says "give people this address" or "nobody else can join"

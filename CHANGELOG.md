@@ -17,6 +17,21 @@ every version here.
 
 ---
 
+## 1.5.0 — 2026-08-10
+
+### Changed
+
+- Updating no longer asks for the address players connect to, or for your
+  domain name. Both are kept from your settings. The address is only asked
+  about when this machine has moved to a different one.
+
+### Added
+
+- `--no-domain`, to drop the domain a server was set up with and go back to
+  plain HTTP on its address.
+
+---
+
 ## 1.4.1 — 2026-08-10
 
 ### Fixed
