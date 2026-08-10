@@ -200,6 +200,42 @@ def accounts_exist():
     _ACC["ts"] = now
     return _ACC["any"]
 
+_HELPER = {"ts": 0.0, "seen": None}
+
+def ingame_helper_seen():
+    """Has the in-game helper ever answered on this server?
+
+    It is a quest running inside the game that watches web_admin_queue and
+    carries out what the panel puts there. A Docker build does not install it,
+    and the Lua binding it calls is not in the port either -- so on those
+    servers nothing ever picks a row up.
+
+    Without this the panel could not tell "the player is not logged in" from
+    "nobody is listening", and reported the first for both: it told operators
+    their character had not been in game while they were standing in it.
+
+    Evidence, not configuration: a row that ever reached any status other than
+    pending or cancelled was moved by the helper, because nothing else touches
+    them. Cached for a minute -- and once the answer is yes it cannot go back
+    to no, so it is then never asked again.
+    """
+    if _HELPER["seen"]:
+        return True
+    now = time.time()
+    if _HELPER["seen"] is not None and now - _HELPER["ts"] < 60:
+        return _HELPER["seen"]
+    _HELPER["ts"] = now
+    try:
+        with db() as c, c.cursor() as cur:
+            cur.execute("SELECT EXISTS(SELECT 1 FROM player.web_admin_queue "
+                        "WHERE status NOT IN ('pending','cancelled')) AS n")
+            row = cur.fetchone()
+        _HELPER["seen"] = bool(row["n"] if isinstance(row, dict) else row[0])
+    except Exception:
+        # Cannot tell: claim nothing, and let the wording stay as it was.
+        _HELPER["seen"] = True
+    return _HELPER["seen"]
+
 def server_status():
     now = time.time()
     if now - _SRV["ts"] < 30:
@@ -1117,6 +1153,15 @@ T = {
  "act_done":     {"en":"✅ Done! The action was applied instantly for {name}.",
                   "de":"✅ Fertig! Die Aktion wurde sofort für {name} angewendet.",
                   "tr":"✅ Tamam! İşlem {name} için anında uygulandı."},
+ # Used when nothing is listening in the game, rather than when the player is
+ # away -- saying "they weren't in game" to somebody who is standing in it
+ # sends them looking for a problem with their character.
+ "act_nohelper": {"en":"✅ Written to {name}'s account. This server has no in-game helper, so it appears the next time they log in — even if they are playing right now.",
+                  "de":"✅ Auf das Konto von {name} geschrieben. Dieser Server hat keinen In-Game-Helfer, es erscheint also beim nächsten Einloggen — auch wenn gerade gespielt wird.",
+                  "tr":"✅ {name} adlı oyuncunun hesabına yazıldı. Bu sunucuda oyun içi yardımcı yok, bu yüzden bir sonraki girişte görünür — şu anda oynuyor olsa bile."},
+ "ingame_nohelper":{"en":"⛔ This server cannot teleport a character or change their running speed: both need a helper inside the game that this build does not install. Items, yang and levels do work — they are written to the account.",
+                  "de":"⛔ Dieser Server kann einen Charakter nicht teleportieren und seine Laufgeschwindigkeit nicht ändern: Beides braucht einen Helfer im Spiel, den diese Version nicht mitinstalliert. Gegenstände, Yang und Level funktionieren — sie werden auf das Konto geschrieben.",
+                  "tr":"⛔ Bu sunucu bir karakteri ışınlayamaz veya koşma hızını değiştiremez: ikisi de bu sürümün kurmadığı bir oyun içi yardımcıya ihtiyaç duyar. Eşya, yang ve seviye çalışır — bunlar hesaba yazılır."},
  "act_offline":  {"en":"✅ {name} wasn't in game right now — it was applied to their account and will be ready when they log in! 🎉",
                   "de":"✅ {name} war gerade nicht im Spiel — es wurde direkt auf dem Konto angewendet und ist beim nächsten Login da! 🎉",
                   "tr":"✅ {name} şu anda oyunda değildi — işlem hesabına uygulandı, giriş yaptığında hazır olacak! 🎉"},
@@ -3184,7 +3229,15 @@ def offline_apply(cur, pid, cmd, arg1, arg2, reason="timeout", name=""):
         # WARP / SPEED need the in-game quest. Faking a warp by writing x/y/map_index is
         # NOT safe (map_index can't be derived from coordinates — the character could end
         # up in the void), so we refuse honestly and say why.
-        key = "ingame_offline" if reason == "player_offline" else "ingame_timeout"
+        if reason == "player_offline":
+            key = "ingame_offline"
+        elif not ingame_helper_seen():
+            # Nothing has ever answered here, so this is not a timeout that
+            # might go the other way next time -- it is the build. Say that,
+            # instead of suggesting they check whether the game is running.
+            key = "ingame_nohelper"
+        else:
+            key = "ingame_timeout"
         raise RuntimeError(t(key).format(name=name))
 
 @app.route("/action", methods=["POST"])
@@ -3251,7 +3304,13 @@ def action():
                     claimed = True
                 if claimed:
                     offline_apply(cur, pid, cmd, arg1, arg2, reason=st, name=name)
-                    flash(t("act_offline").format(name=name))
+                    # "They weren't in game" is only true when the quest said so.
+                    # On a build with no quest at all it is a guess, and a wrong
+                    # one for anybody who is playing while they read it.
+                    if st == "timeout" and not ingame_helper_seen():
+                        flash(t("act_nohelper").format(name=name))
+                    else:
+                        flash(t("act_offline").format(name=name))
                 else:
                     # The quest grabbed it while we were waiting — do NOT apply again.
                     cur.execute("SELECT status FROM player.web_admin_queue WHERE id=%s", (qid,))

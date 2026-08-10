@@ -17,6 +17,18 @@ every version here.
 
 ---
 
+## 1.2.2 — 2026-08-10
+
+### Fixed
+
+- Giving an item, yang or a level to a character who is logged in no longer
+  claims they were not in game. It says the change was written to the account
+  and appears at their next login.
+- Teleport and running speed now say this build has no in-game helper, instead
+  of suggesting the game server might be down.
+
+---
+
 ## 1.2.1 — 2026-08-10
 
 ### Changed
