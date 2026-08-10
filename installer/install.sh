@@ -100,6 +100,15 @@ TLS_EMAIL="${M2_TLS_EMAIL:-}"
 AUTH_PORT="${M2_AUTH_PORT:-11000}"
 GAME_PORTS="${M2_GAME_PORT_RANGE:-13000-13002}"
 PANEL_PORT="${M2_PANEL_PUBLIC_PORT:-7788}"
+
+# Snapshotted before the command line is read, so replay_command() can tell an
+# option somebody actually gave from a default that happens to equal it. Taken
+# from the variables rather than written out again, so changing a default above
+# cannot leave a stale copy down here.
+DEF_INSTALL_DIR="$INSTALL_DIR"
+DEF_AUTH_PORT="$AUTH_PORT"
+DEF_GAME_PORTS="$GAME_PORTS"
+DEF_PANEL_PORT="$PANEL_PORT"
 ASSUME_YES=0
 DRY_RUN=0
 LOCAL_ONLY=0
@@ -906,6 +915,36 @@ run_fetch_sources() {
 # was made out of. Empty when it cannot be told -- which is not an error: every
 # server installed before versions existed has no such file, and there are more
 # of those than of any other kind right now.
+# The command that reinstalls THIS server, options and all. The panel shows it
+# when an update appears, so it has to be the command that rebuilds what is
+# actually here -- printing the bare one-liner to somebody who installed with
+# --domain would quietly drop their certificate on the next update.
+#
+# Only options that describe the server are replayed. The ones that say where
+# the SOURCES came from this time (--archive, --reference-dir, --source-url,
+# --repo-*) are left out on purpose: they point at files that may well be gone
+# by then, and the cache makes them unnecessary anyway.
+_q() { # shell-quote one value, for paths with spaces in them
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+replay_command() {
+    _opt=""
+    [ "$INSTALL_DIR" != "$DEF_INSTALL_DIR" ] && _opt="$_opt --dir $(_q "$INSTALL_DIR")"
+    [ -n "$DOMAIN" ]    && _opt="$_opt --domain $(_q "$DOMAIN")"
+    [ -n "$TLS_EMAIL" ] && _opt="$_opt --email $(_q "$TLS_EMAIL")"
+    [ "$LOCAL_ONLY" = "1" ]    && _opt="$_opt --local"
+    [ "$SKIP_CLIENT" = "1" ]   && _opt="$_opt --no-client"
+    [ "$SKIP_FIREWALL" = "1" ] && _opt="$_opt --no-firewall"
+    [ "$AUTH_PORT"  != "$DEF_AUTH_PORT"  ] && _opt="$_opt --auth-port $AUTH_PORT"
+    [ "$GAME_PORTS" != "$DEF_GAME_PORTS" ] && _opt="$_opt --game-ports $(_q "$GAME_PORTS")"
+    [ "$PANEL_PORT" != "$DEF_PANEL_PORT" ] && _opt="$_opt --panel-port $PANEL_PORT"
+    if [ -n "$_opt" ]; then
+        printf 'curl -fsSL %s | sudo sh -s --%s' "$M2_INSTALLER_URL" "$_opt"
+    else
+        printf 'curl -fsSL %s | sudo sh' "$M2_INSTALLER_URL"
+    fi
+}
+
 installed_version() {
     _v=""
     [ -f "$INSTALL_DIR/panel/app/VERSION" ] && _v=$(head -1 "$INSTALL_DIR/panel/app/VERSION" 2>/dev/null | tr -d '\r\n \t')
@@ -1250,7 +1289,7 @@ write_env() {
     # version, rebuilds and restarts, and keeps the database, the passwords and
     # the settings -- so re-running it IS the update. Anyone who would rather
     # not pipe a script into a shell has the step-by-step in UPDATING.md.
-    env_set "$_env" M2_UPDATE_COMMAND "curl -fsSL $M2_INSTALLER_URL | sudo sh"
+    env_set "$_env" M2_UPDATE_COMMAND "$(replay_command)"
 
     # Where the panel listens on the host.
     #

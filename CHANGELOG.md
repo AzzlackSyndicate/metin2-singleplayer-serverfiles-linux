@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.2.3 — 2026-08-10
+
+### Fixed
+
+- The update command shown in the panel now includes the options the server was
+  installed with, such as `--domain` and `--email`. It previously showed the
+  bare one-liner, which on the next update would have dropped the certificate.
+
+---
+
 ## 1.2.2 — 2026-08-10
 
 ### Fixed
