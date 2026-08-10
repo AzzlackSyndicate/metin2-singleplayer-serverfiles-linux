@@ -563,6 +563,29 @@ def _read_version():
 
 PANEL_VERSION = _read_version()
 
+def changelog_split(md, version):
+    """Split a changelog at `version`: (newer than it, it and everything older).
+
+    CHANGELOG.md is cumulative, so the published copy contains every release
+    including the ones already installed. Showing it whole next to the local
+    file printed the same entries twice. Split at the running version and each
+    side has something the other does not: what an update would bring, and what
+    is already here.
+
+    Sections start at a line like "## 1.2.3 — 2026-08-10". Anything before the
+    first of those is the file's own preamble and belongs with the history,
+    not with the news. A version that cannot be parsed puts everything in the
+    "newer" half, which is the safe way round: better to show a release twice
+    than to hide one.
+    """
+    head, newer, older, cur = [], [], [], None
+    for line in (md or "").splitlines(True):
+        m = re.match(r'##\s+(\d{1,5}\.\d{1,5}\.\d{1,5})\b', line)
+        if m:
+            cur = newer if (not version or semver_newer(m.group(1), version)) else older
+        (cur if cur is not None else head).append(line)
+    return "".join(newer), "".join(head) + "".join(older)
+
 def local_changelog():
     """The changelog for the build that is running, or "" when it is not here."""
     for path in (CHANGELOG_FILE, os.path.join(_HERE, os.pardir, "CHANGELOG.md")):
@@ -1379,6 +1402,8 @@ T = {
  "upd_avail_short":{"en":"update available","de":"Update verfügbar","tr":"güncelleme var"},
  "upd_see":      {"en":"See what it brings","de":"Ansehen, was es bringt","tr":"Neler getirdiğine bak"},
  "pl_card_t":    {"en":"Version and changes","de":"Version und Änderungen","tr":"Sürüm ve değişiklikler"},
+ "pl_new_t":     {"en":"What an update would bring","de":"Was ein Update bringen würde","tr":"Güncelleme ne getirir"},
+ "pl_have_t":    {"en":"What you are running","de":"Was bei dir läuft","tr":"Çalıştırdığın sürüm"},
  "pl_check":     {"en":"🔄 Check for the latest version","de":"🔄 Nach der neuesten Version suchen","tr":"🔄 En son sürümü kontrol et"},
  "pl_check_new": {"en":"A newer version is available: {new}.","de":"Eine neuere Version ist verfügbar: {new}.","tr":"Daha yeni bir sürüm var: {new}."},
  "pl_check_ok":  {"en":"Checked. You already have the newest published version.","de":"Geprüft. Du hast bereits die neueste veröffentlichte Version.","tr":"Kontrol edildi. Zaten en yeni yayımlanan sürüme sahipsin."},
@@ -2515,13 +2540,19 @@ docker compose --profile update up -d updater</pre>
 
 {% endif %}
 
-{# One changelog, not two. When there is an update the published file is the
-   one to show: it is cumulative, so it already contains every entry the local
-   copy has plus the new ones -- printing both put the same releases on the
-   page twice. #}
+{# Two sections, and nothing appears in both: the changelog is split at the
+   version this panel is running. Above the line is what an update would add,
+   below it is what is already here. #}
+{% if remote %}
 <div class="card">
-{% set notes = remote if remote else local %}
-{% if notes %}<div class="md">{{notes}}</div>
+<h3>⬆️ {{t('pl_new_t')}}</h3>
+<div class="md">{{remote}}</div>
+</div>
+{% endif %}
+
+<div class="card">
+<h3>{{t('pl_have_t')}}</h3>
+{% if local %}<div class="md">{{local}}</div>
 {% else %}<p class="muted">{{t('pl_none')}}</p>{% endif %}
 </div>
 
@@ -2614,10 +2645,19 @@ def patchlog():
     local one came out of the image. Neither is trusted more than the other,
     because neither needs to be.
     """
+    # One source when there is one. The published file is cumulative, so it
+    # carries both halves: split it at the running version and neither side
+    # repeats the other. Without it, all that is known is what shipped in this
+    # build, and that is entirely "what you are running".
+    pub = update_notes()
+    if pub:
+        newer, upto = changelog_split(pub, PANEL_VERSION)
+    else:
+        newer, upto = "", local_changelog()
     return render_template_string(
         TPL_PATCHLOG,
-        local=md_to_html(local_changelog()),
-        remote=md_to_html(update_notes()),
+        local=md_to_html(upto),
+        remote=md_to_html(newer),
         checked_at=_checked_at(update_state()["checked"]),
         can_apply=update_can_apply(),
         apply_on=UPDATE_APPLY,

@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.2.0 — 2026-08-10
+
+### Changed
+
+- The patch log splits the changelog at the version you are running: "What an
+  update would bring" lists only the releases you do not have yet, and "What
+  you are running" the rest. No release appears in both.
+
+---
+
 ## 1.1.9 — 2026-08-10
 
 ### Changed
