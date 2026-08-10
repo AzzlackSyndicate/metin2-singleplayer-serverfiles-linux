@@ -880,11 +880,32 @@ cmd_fetch() {
     mkdir -p "$CACHE" 2>/dev/null
     { : >>"$LOG"; } 2>/dev/null || LOG=/dev/null
 
-    if [ -f "$STAMP" ] && [ -z "$FORCE" ] && check_tree >/dev/null 2>&1; then
+    # A staged tree is only current for the patch it was built from. The stamp
+    # has recorded that patch's checksum since the beginning and nothing ever
+    # read it, so a tree staged from an older port was taken as finished: the
+    # checkout updated, the patch in it changed, and the source the image was
+    # built from did not. Every C++ change since an install was therefore
+    # silently dropped, and the rebuild produced the same binary as before.
+    _patch_changed=0
+    if [ -f "$STAMP" ] && [ -f "$PATCH_FILE" ]; then
+        _was=$(sed -n 's/^patchsum=//p' "$STAMP" 2>/dev/null | head -1)
+        _now=$(sha256sum "$PATCH_FILE" 2>/dev/null | awk '{print $1}')
+        [ -n "$_was" ] && [ -n "$_now" ] && [ "$_was" != "$_now" ] && _patch_changed=1
+    fi
+
+    if [ -f "$STAMP" ] && [ -z "$FORCE" ] && [ "$_patch_changed" = 0 ] \
+       && check_tree >/dev/null 2>&1; then
         step "Nothing to do"
         ok "a complete porting tree is already staged in $TREE"
         note "  (--force restage rebuilds it, --force redownload starts over)"
     else
+        if [ "$_patch_changed" = 1 ] && [ -z "$FORCE" ]; then
+            step "The port has changed"
+            note "  The staged tree was built from a different version of the port,"
+            note "  so it is rebuilt from the upstream source. Nothing is downloaded"
+            note "  again -- the archive and the unpacked copy are kept."
+            FORCE=restage
+        fi
         acquire
         extract_all
         apply_patch

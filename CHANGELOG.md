@@ -17,6 +17,17 @@ every version here.
 
 ---
 
+## 1.3.1 — 2026-08-10
+
+### Fixed
+
+- Updating a server never picked up changes to the game itself. The source was
+  staged once and reused, so the rebuild produced the same binaries and every
+  C++ change since the install was dropped. If you updated to 1.3.0 and teleport
+  still does not work, update again.
+
+---
+
 ## 1.3.0 — 2026-08-10
 
 ### Added
