@@ -17,6 +17,23 @@ every version here.
 
 ---
 
+## 1.8.0 — 2026-08-10
+
+### Added
+
+- **Admin passphrase** on the admin page, just under the introduction. Pick
+  your own instead of the generated one; it takes effect straight away and you
+  stay logged in.
+
+### Changed
+
+- The installer shows the admin passphrase every time it runs, including one
+  you chose yourself in the panel, and never changes it behind your back.
+- The introduction no longer says teleport and running speed are missing from
+  a normal install. They are there; they need the player to be logged in.
+
+---
+
 ## 1.7.0 — 2026-08-10
 
 ### Fixed

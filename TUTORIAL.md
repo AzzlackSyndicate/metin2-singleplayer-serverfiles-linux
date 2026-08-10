@@ -154,6 +154,11 @@ configure. It even works from a USB stick.
 every time. It is also stored in the stack's `.env` file, so you can look it up
 again.
 
+You can pick your own instead: on the admin page, just under the introduction,
+there is an **Admin passphrase** card. Updating never changes it, and the
+installer prints whichever one is current every time you run it — including one
+you chose yourself.
+
 > **Where the stack lives.** On Linux that is `/opt/metin2/stack`, readable only
 > by root. On Windows it is `Metin2Server` in your user folder. Every `cd
 > /opt/metin2/stack` below is that folder on Windows instead.

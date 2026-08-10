@@ -406,6 +406,23 @@ def gm_ask_for_reload():
 CONF_PATH = _env_path("M2PANEL_CONF", "/usr/local/etc/m2panel.conf")
 REQUIRED_CONF = ("flask_secret", "db_user", "db_pass", "salt", "pass_hash")
 
+# ---- the admin passphrase, when the operator changes it here ----------------
+# The hash lives in m2panel.conf and the panel may rewrite it: the entrypoint
+# chowns that file to the panel account before dropping to it. The salt is
+# renewed at the same time -- there is no reason to carry an old one forward.
+#
+# The plaintext is also written to a file of its own, and that is a deliberate
+# trade rather than an oversight. The installer prints the passphrase at the end
+# of every run, and it cannot print what it cannot read; a hash is a hash. The
+# installer already keeps the generated one in .env in the clear (root-owned,
+# 0600), so this is not a new kind of secret on this machine -- but it is one a
+# person chose, and people reuse those. Anyone who would rather no passphrase of
+# theirs sat on a disk should keep the generated one and not use this form.
+PASSPHRASE_FILE = _env_path("M2PANEL_PASSPHRASE_FILE",
+                            os.path.join(os.path.dirname(CONF_PATH) or ".",
+                                         "panel.passphrase"))
+PASSPHRASE_MIN = 8
+
 # Every setting in the config file can also come from the environment, which is
 # how a container is normally fed its secrets: M2PANEL_DB_PASS for "db_pass",
 # M2PANEL_FLASK_SECRET for "flask_secret", and so on. An environment variable
@@ -1365,15 +1382,51 @@ T = {
  "op_players":   {"en":"Under Players you find every character with the account it belongs to. Open one to give items or yang, or to set a level. Those go straight into the database, so the player has to log out and back in before they see them.",
                   "de":"Unter „Spieler“ findest du jeden Charakter mit dem Konto, zu dem er gehört. Öffne einen, um Gegenstände oder Yang zu geben oder ein Level zu setzen. Das geht direkt in die Datenbank — der Spieler muss sich also aus- und wieder einloggen, bevor er es sieht.",
                   "tr":"„Oyuncular“ altında her karakteri, ait olduğu hesapla birlikte görürsün. Eşya ya da yang vermek veya seviye ayarlamak için birini aç. Bunlar doğrudan veritabanına yazılır, yani oyuncunun görmesi için çıkıp yeniden girmesi gerekir."},
- "op_limits":    {"en":"Teleport and Running speed are different: they act on a character who is online right now, through a helper script inside the game. A standard Docker install does not include that helper, so on one of those the two buttons will report that they got no answer — which is the panel being honest rather than pretending it worked.",
-                  "de":"Teleportieren und Laufgeschwindigkeit sind anders: Sie wirken auf einen gerade eingeloggten Charakter, über ein Hilfsskript im Spiel. Eine normale Docker-Installation bringt dieses Skript nicht mit — dort melden die beiden Schaltflächen deshalb, dass sie keine Antwort bekommen haben. Das ist das Panel, das ehrlich bleibt, statt Erfolg vorzutäuschen.",
-                  "tr":"Işınla ve Koşma hızı farklıdır: o anda çevrimiçi olan bir karaktere, oyunun içindeki bir yardımcı betik üzerinden etki ederler. Standart bir Docker kurulumu bu betiği içermez, dolayısıyla orada iki düğme de yanıt alamadığını bildirir — bu, panelin başarılı gibi davranmak yerine dürüst kalmasıdır."},
+ "op_limits":    {"en":"Teleport and Running speed are different: they act on a character who is online right now, through a helper script inside the game. So they need the player to actually be logged in — for anybody who is not, the two buttons say so instead of pretending it worked.",
+                  "de":"Teleportieren und Laufgeschwindigkeit sind anders: Sie wirken auf einen gerade eingeloggten Charakter, über ein Hilfsskript im Spiel. Sie brauchen also einen Spieler, der wirklich online ist — bei allen anderen sagen die beiden Schaltflächen das, statt Erfolg vorzutäuschen.",
+                  "tr":"Işınla ve Koşma hızı farklıdır: o anda çevrimiçi olan bir karaktere, oyunun içindeki bir yardımcı betik üzerinden etki ederler. Yani oyuncunun gerçekten oyunda olması gerekir — olmayanlar için iki düğme de başarılı gibi davranmak yerine bunu söyler."},
  "op_forgot":    {"en":"When a player forgets their password, you make them a reset link below. It works once and expires after a day — you never see or set their password yourself.",
                   "de":"Wenn ein Spieler sein Passwort vergisst, erzeugst du ihm unten einen Reset-Link. Er funktioniert einmal und verfällt nach einem Tag — du siehst oder setzt sein Passwort nie selbst.",
                   "tr":"Bir oyuncu şifresini unutursa, aşağıda ona bir sıfırlama bağlantısı oluşturursun. Bir kez çalışır ve bir gün sonra geçersiz olur — şifresini asla sen görmez ya da belirlemezsin."},
  "op_more":      {"en":"Everything else — backups, moving the server, rebuilding the client for a new address — is in the project's documentation.",
                   "de":"Alles Weitere — Sicherungen, Serverumzug, den Client für eine neue Adresse neu bauen — steht in der Dokumentation des Projekts.",
                   "tr":"Geri kalan her şey — yedekler, sunucu taşıma, yeni bir adres için istemciyi yeniden derleme — projenin belgelerinde."},
+ # --- changing the admin passphrase from here ---
+ "op_pp":        {"en":"The passphrase for this panel is the one the installer printed when it finished. You can pick your own below — the installer will show whichever one is current every time you run it again.",
+                  "de":"Die Passphrase für dieses Panel ist die, die der Installer am Ende ausgegeben hat. Unten kannst du eine eigene wählen — der Installer zeigt dir bei jedem weiteren Lauf die jeweils aktuelle.",
+                  "tr":"Bu panelin gizli kelimesi, kurulum bittiğinde yazdırdığı kelimedir. Aşağıdan kendi seçebilirsin — kurulumu her yeniden çalıştırdığında sana güncel olanı gösterir."},
+ "pp_title":     {"en":"🔑 Admin passphrase","de":"🔑 Admin-Passphrase","tr":"🔑 Yönetici gizli kelimesi"},
+ "pp_old":       {"en":"Current passphrase","de":"Aktuelle Passphrase","tr":"Mevcut gizli kelime"},
+ "pp_new":       {"en":"New passphrase (at least {n} characters)","de":"Neue Passphrase (mindestens {n} Zeichen)","tr":"Yeni gizli kelime (en az {n} karakter)"},
+ "pp_new2":      {"en":"New passphrase again","de":"Neue Passphrase wiederholen","tr":"Yeni gizli kelimeyi tekrar"},
+ "pp_save":      {"en":"🔑 Change passphrase","de":"🔑 Passphrase ändern","tr":"🔑 Gizli kelimeyi değiştir"},
+ "pp_local":     {"en":"This server only listens to this computer, so the panel does not ask for a passphrase. Setting one now means it is ready if you ever put this server somewhere others can reach.",
+                  "de":"Dieser Server lauscht nur auf diesem Rechner, deshalb fragt das Panel gar nicht nach einer Passphrase. Wenn du jetzt eine setzt, ist sie bereit, falls du den Server später irgendwo hinstellst, wo andere ihn erreichen.",
+                  "tr":"Bu sunucu yalnızca bu bilgisayarı dinliyor, bu yüzden panel gizli kelime sormuyor. Şimdi bir tane belirlersen, sunucuyu ileride başkalarının erişebileceği bir yere koyduğunda hazır olur."},
+ "pp_done":      {"en":"Passphrase changed. Use the new one from now on — the installer will show it the next time you run it.",
+                  "de":"Passphrase geändert. Ab jetzt gilt die neue — der Installer zeigt sie dir beim nächsten Lauf an.",
+                  "tr":"Gizli kelime değiştirildi. Bundan sonra yenisi geçerli — kurulumu bir dahaki çalıştırmanda onu gösterecek."},
+ "pp_done_unsaved":{"en":"Passphrase changed — use the new one from now on. It could not be written down for the installer, so make a note of it yourself.",
+                  "de":"Passphrase geändert — ab jetzt gilt die neue. Sie konnte für den Installer nicht hinterlegt werden, notier sie dir also selbst.",
+                  "tr":"Gizli kelime değiştirildi — bundan sonra yenisi geçerli. Kurulum için kaydedilemedi, bu yüzden kendin not al."},
+ "pp_bad_old":   {"en":"That is not the current passphrase, so nothing was changed.",
+                  "de":"Das ist nicht die aktuelle Passphrase, es wurde nichts geändert.",
+                  "tr":"Bu, mevcut gizli kelime değil; hiçbir şey değiştirilmedi."},
+ "pp_short":     {"en":"A passphrase needs at least {n} characters. Nothing was changed.",
+                  "de":"Eine Passphrase braucht mindestens {n} Zeichen. Es wurde nichts geändert.",
+                  "tr":"Gizli kelime en az {n} karakter olmalı. Hiçbir şey değiştirilmedi."},
+ "pp_mismatch":  {"en":"The two new passphrases are not the same, so nothing was changed.",
+                  "de":"Die beiden neuen Passphrasen sind nicht gleich, es wurde nichts geändert.",
+                  "tr":"İki yeni gizli kelime aynı değil; hiçbir şey değiştirilmedi."},
+ "pp_failed":    {"en":"The passphrase could not be saved, so it is unchanged. The panel's settings file is not writable.",
+                  "de":"Die Passphrase konnte nicht gespeichert werden, sie bleibt also unverändert. Die Einstellungsdatei des Panels ist nicht beschreibbar.",
+                  "tr":"Gizli kelime kaydedilemedi, bu yüzden değişmedi. Panelin ayar dosyası yazılabilir değil."},
+ "pp_env":       {"en":"This panel takes its passphrase from its environment, not from its settings file, so it cannot be changed here. Change it where that value is set.",
+                  "de":"Dieses Panel bezieht seine Passphrase aus der Umgebung, nicht aus seiner Einstellungsdatei — hier lässt sie sich deshalb nicht ändern. Ändere sie dort, wo dieser Wert gesetzt wird.",
+                  "tr":"Bu panel gizli kelimesini ayar dosyasından değil ortam değişkeninden alıyor, bu yüzden burada değiştirilemez. Bu değerin ayarlandığı yerden değiştir."},
+ "tip_pp":       {"en":"Changes the passphrase for this admin panel. It does not affect any game account.",
+                  "de":"Ändert die Passphrase für dieses Admin-Panel. Auf Spielkonten hat das keine Auswirkung.",
+                  "tr":"Bu yönetim panelinin gizli kelimesini değiştirir. Oyun hesaplarını etkilemez."},
  "op_hide":      {"en":"Got it — hide this","de":"Verstanden — ausblenden","tr":"Anladım — gizle"},
  "op_show":      {"en":"Show the introduction again","de":"Einführung wieder anzeigen","tr":"Tanıtımı yeniden göster"},
  # --- admin-made password reset links ---
@@ -1673,6 +1726,7 @@ def inject_i18n():
             "dlsha": _cf["sha256"],
             "local_only": bool(CONF.get("local_only", False)),
             "has_accounts": accounts_exist(),
+            "pp_min": PASSPHRASE_MIN,
             # The version, and whether a newer one is known. Both are read out
             # of memory -- update_state() never touches the network, so this
             # costs a public page render nothing at all. The notice itself is
@@ -2443,6 +2497,7 @@ TPL_DASH = BASE.replace("__BODY__", """
 <p>{{t('op_players')}}</p>
 <p>{{t('op_limits')}}</p>
 <p>{{t('op_forgot')}}</p>
+<p>{{t('op_pp')}}</p>
 <p class="muted">{{t('op_more')}}</p>
 <button class="btn" id="introhide" type="button">{{t('op_hide')}}</button>
 </div>
@@ -2459,6 +2514,19 @@ TPL_DASH = BASE.replace("__BODY__", """
  show.addEventListener('click',function(e){ e.preventDefault(); try{localStorage.removeItem(KEY);}catch(e){} apply(false); });
 })();
 </script>
+
+{# Its own card rather than a paragraph inside the introduction above: that one
+   can be hidden for good with one click, and a way back into your own panel
+   should not disappear with it. #}
+<div class="card"><h3 class="help" title="{{t('tip_pp')}}">{{t('pp_title')}}</h3>
+{% if local_only %}<p class="muted">{{t('pp_local')}}</p>{% endif %}
+<form method="post" action="{{url_for('set_passphrase')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+{% if not local_only %}<input type="password" name="old" placeholder="{{t('pp_old')}}" title="{{t('tip_pp')}}">{% endif %}
+<input type="password" name="new" placeholder="{{t('pp_new').format(n=pp_min)}}" title="{{t('tip_pp')}}">
+<input type="password" name="new2" placeholder="{{t('pp_new2')}}" title="{{t('tip_pp')}}">
+<button class="big" title="{{t('tip_pp')}}">{{t('pp_save')}}</button></form></div>
+
 {# Always here, so the changelog is one click away rather than a grey line at
    the bottom of the page. It lights up by itself when there is something to
    fetch. Only on the admin side -- the front page belongs to the players. #}
@@ -3573,6 +3641,89 @@ def action():
     except Exception:
         flash(t("act_unexpected"), "error")
     return redirect(url_for("player", pid=pid))
+
+@app.route("/passphrase", methods=["POST"])
+@login_required
+def set_passphrase():
+    """Choose a new admin passphrase.
+
+    Writes the new salt and hash into m2panel.conf and the plaintext into
+    PASSPHRASE_FILE, so the installer can go on printing the passphrase at the
+    end of every run -- see the note above PASSPHRASE_FILE for why that file
+    exists at all.
+
+    The session survives: the Flask secret is not touched, so the operator is
+    not thrown out of the page they are standing on.
+    """
+    # If the hash came from the environment, the file is not what the panel
+    # reads and rewriting it would look like it worked until the next restart.
+    # Only a hand-assembled stack does this; ours passes neither.
+    if os.environ.get("M2PANEL_SALT", "").strip() or os.environ.get("M2PANEL_PASS_HASH", "").strip():
+        flash(t("pp_env"), "error")
+        return redirect(url_for("dash"))
+
+    new  = request.form.get("new", "")
+    new2 = request.form.get("new2", "")
+
+    # On a local install there is no passphrase in use -- login_required lets
+    # everybody through, and asking for a current one nobody has ever typed
+    # would make the form impossible to submit. Everywhere else, holding a
+    # session is not enough to change the password on it.
+    if not local_open():
+        if not check_pass(request.form.get("old", "")):
+            flash(t("pp_bad_old"), "error")
+            return redirect(url_for("dash"))
+
+    if len(new) < PASSPHRASE_MIN:
+        flash(t("pp_short").format(n=PASSPHRASE_MIN), "error")
+        return redirect(url_for("dash"))
+    if new != new2:
+        flash(t("pp_mismatch"), "error")
+        return redirect(url_for("dash"))
+
+    salt = secrets.token_hex(16)
+    ph   = hashlib.pbkdf2_hmac("sha256", new.encode(), salt.encode(), 200_000).hex()
+
+    try:
+        # Read, change two keys, write back. Everything else in the file is the
+        # entrypoint's and none of it is ours to rewrite.
+        with open(CONF_PATH, encoding="utf-8") as f:
+            conf_on_disk = json.load(f)
+        conf_on_disk["salt"] = salt
+        conf_on_disk["pass_hash"] = ph
+
+        # Written beside the real file and moved over it, so a crash halfway
+        # through cannot leave a config that locks the operator out of their own
+        # panel with no way back in.
+        tmp = CONF_PATH + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(conf_on_disk, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, CONF_PATH)
+    except Exception:
+        flash(t("pp_failed"), "error")
+        return redirect(url_for("dash"))
+
+    # Live, for this process, before anything can ask again.
+    CONF["salt"] = salt
+    CONF["pass_hash"] = ph
+
+    # For the installer. A failure here costs the operator nothing they can see
+    # now -- the new passphrase works either way -- so it must not read as if
+    # the change did not happen.
+    kept = True
+    try:
+        tmp = PASSPHRASE_FILE + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, PASSPHRASE_FILE)
+    except OSError:
+        kept = False
+
+    session["auth"] = True
+    flash(t("pp_done") if kept else t("pp_done_unsaved"))
+    return redirect(url_for("dash"))
 
 @app.route("/gm", methods=["POST"])
 @login_required

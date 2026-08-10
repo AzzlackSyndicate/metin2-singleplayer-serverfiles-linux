@@ -126,6 +126,7 @@ FRESH_INSTALL=1
 PANEL_PASSWORD=""
 PANEL_PASSWORD_KNOWN=1
 PANEL_PASSWORD_NEW=1
+PANEL_PASSWORD_CHOSEN=0   # the operator picked this one in the panel itself
 CLIENT_STATE="unavailable"
 CLIENT_LOG=""
 NGINX_ACCEL="no"
@@ -301,6 +302,27 @@ env_set() {
 # =============================================================================
 
 dc() { ( cd "$INSTALL_DIR" && docker compose "$@" ); }
+
+# The passphrase the operator chose in the panel, if they have.
+#
+# The panel writes it there when somebody uses its "change passphrase" form,
+# because a hash cannot be printed and this script promises to show the
+# passphrase at the end of every run. Empty is the normal answer: it means
+# nobody has changed it and .env still has the right one.
+#
+# Tried twice on purpose. `exec' is the cheap way and works while the stack is
+# up, which it is during an update; `run' starts a throwaway container off the
+# same volume and covers a stack that happens to be stopped. --no-deps so it
+# does not drag the database up to read one line, and --entrypoint because the
+# panel image's own entrypoint would wait for that database.
+panel_chosen_passphrase() {
+    [ "$DRY_RUN" = "1" ] && return 0
+    [ "$FRESH_INSTALL" = "0" ] || return 0     # nothing has run here yet
+    _f="/usr/local/etc/panel.passphrase"
+    _v=$(dc exec -T panel cat "$_f" 2>/dev/null | tr -d '\r\n')
+    [ -n "$_v" ] || _v=$(dc run --rm -T --no-deps --entrypoint cat panel "$_f" 2>/dev/null | tr -d '\r\n')
+    printf '%s' "$_v"
+}
 
 # The compose file names its own project and its own containers, so read them
 # out of it rather than assuming. Getting this from the file means a stack that
@@ -1307,7 +1329,20 @@ write_env() {
     _conf_volume_exists=0
     docker volume inspect "$(stack_project)_panel-conf" >/dev/null 2>&1 && _conf_volume_exists=1
 
-    if [ -n "$_panel_pw" ]; then
+    # A passphrase chosen in the panel wins over the one in .env: the panel is
+    # where it was last changed, and .env is only this script's note of it.
+    # Writing it back below is what keeps the two in step, so every later run
+    # finds it in .env without having to reach into a container at all.
+    _chosen=$(panel_chosen_passphrase)
+
+    if [ -n "$_chosen" ]; then
+        _panel_pw="$_chosen"
+        PANEL_PASSWORD="$_chosen"
+        PANEL_PASSWORD_KNOWN=1
+        PANEL_PASSWORD_NEW=0
+        PANEL_PASSWORD_CHOSEN=1
+        info "admin panel password: the one you chose in the panel"
+    elif [ -n "$_panel_pw" ]; then
         PANEL_PASSWORD="$_panel_pw"
         PANEL_PASSWORD_KNOWN=1
         PANEL_PASSWORD_NEW=0
@@ -2270,11 +2305,17 @@ summary() {
     if [ "$PANEL_PASSWORD_KNOWN" = "1" ] && [ -n "$PANEL_PASSWORD" ]; then
         printf '       %s%s%s\n' "$C_BOLD$C_CYAN" "$PANEL_PASSWORD" "$C_RESET"
         printf '\n'
-        if [ "$PANEL_PASSWORD_NEW" = "1" ]; then
+        if [ "$PANEL_PASSWORD_CHOSEN" = "1" ]; then
+            printf '     This is the one you chose in the admin panel. Updating\n'
+            printf '     does not change it, and this line will keep showing it.\n'
+        elif [ "$PANEL_PASSWORD_NEW" = "1" ]; then
             printf '     Generated on this machine just now, for this server only.\n'
+            printf '     You can pick your own in the panel; it is offered right\n'
+            printf '     under the introduction on the admin page.\n'
         else
             printf '     This is the password from when the server was first\n'
-            printf '     installed here. It has not been changed.\n'
+            printf '     installed here. It has not been changed. You can pick\n'
+            printf '     your own in the panel, under the introduction.\n'
         fi
         printf '     It is also kept in %s\n' "$INSTALL_DIR/.env"
         printf '     (which only root can read) -- so you can look it up again.\n'

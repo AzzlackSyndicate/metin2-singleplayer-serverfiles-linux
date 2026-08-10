@@ -118,6 +118,7 @@ $script:PanelPort         = 7788
 $script:PanelPassword     = ''
 $script:PanelPasswordKnown = $true
 $script:PanelPasswordNew   = $true
+$script:PanelPasswordChosen = $false   # the operator picked this one in the panel
 $script:FreshInstall      = $true
 $script:ClientState       = 'unavailable'
 $script:ClientLog         = ''
@@ -342,6 +343,28 @@ function Invoke-ComposeQuiet {
     try {
         return (Invoke-Native 'docker' (@('compose') + $ComposeArgs))
     } finally { Pop-Location }
+}
+
+# The passphrase the operator chose in the panel, if they have.
+#
+# The panel writes it there when somebody uses its "change passphrase" form,
+# because a hash cannot be printed and this script promises to show the
+# passphrase at the end of every run. An empty string is the normal answer and
+# means nobody has changed it, so .env still holds the right one.
+#
+# Two attempts on purpose: `exec' is cheap and works while the stack is up,
+# which it is during an update; `run' starts a throwaway container off the same
+# volume and covers a stack that happens to be stopped. --no-deps so it does not
+# start the database to read one line, and --entrypoint because the panel
+# image's own entrypoint would wait for that database.
+function Get-PanelChosenPassphrase {
+    if ($script:DryRun -or $script:FreshInstall) { return '' }
+    $f = '/usr/local/etc/panel.passphrase'
+    $r = Invoke-ComposeQuiet @('exec', '-T', 'panel', 'cat', $f)
+    if ($r.Code -eq 0 -and $r.Output) { return $r.Output.Trim() }
+    $r = Invoke-ComposeQuiet @('run', '--rm', '-T', '--no-deps', '--entrypoint', 'cat', 'panel', $f)
+    if ($r.Code -eq 0 -and $r.Output) { return $r.Output.Trim() }
+    return ''
 }
 
 # The compose file names its own project and its own containers, so read them
@@ -1350,7 +1373,20 @@ downloaded server files, the client -- is kept either way.
     $panelPw = Get-EnvValue $envPath 'M2_PANEL_PASSWORD'
     $confVolumeExists = ((Invoke-Native 'docker' @('volume', 'inspect', "$(Get-StackProject)_panel-conf")).Code -eq 0)
 
-    if ($panelPw) {
+    # A passphrase chosen in the panel wins over the one in .env: the panel is
+    # where it was last changed, and .env is only this script's note of it.
+    # Writing it back below keeps the two in step, so every later run finds it
+    # in .env without having to reach into a container at all.
+    $chosen = Get-PanelChosenPassphrase
+
+    if ($chosen) {
+        $panelPw = $chosen
+        $script:PanelPassword = $chosen
+        $script:PanelPasswordKnown = $true
+        $script:PanelPasswordNew = $false
+        $script:PanelPasswordChosen = $true
+        Write-Info 'admin panel password: the one you chose in the panel'
+    } elseif ($panelPw) {
         $script:PanelPassword = $panelPw
         $script:PanelPasswordKnown = $true
         $script:PanelPasswordNew = $false
@@ -2418,7 +2454,12 @@ function Show-Summary {
     # A local install has no passphrase -- the panel lets you straight in,
     # because it listens to this computer and nothing else. Printing a password
     # nobody is ever asked for only makes people think they have to keep it.
-    $showPassword = -not $script:LocalOnly
+    # A local server never asks for the passphrase, so printing one only raises
+    # the question of what it is for -- which is why this section is normally
+    # skipped here. Once the operator has deliberately set one in the panel it
+    # stops being noise and becomes the thing they want confirmed after every
+    # update, so then it is shown.
+    $showPassword = (-not $script:LocalOnly) -or $script:PanelPasswordChosen
 
     # Everything below is ordered so that the part people actually need is the
     # last thing on screen when the installer finishes. The warnings and the
@@ -2614,11 +2655,17 @@ function Show-Summary {
         if ($script:PanelPasswordKnown -and $script:PanelPassword) {
             Write-Host "       $($script:PanelPassword)" -ForegroundColor Cyan
             Write-Host ''
-            if ($script:PanelPasswordNew) {
+            if ($script:PanelPasswordChosen) {
+                Write-Host '     This is the one you chose in the admin panel. Updating'
+                Write-Host '     does not change it, and this line will keep showing it.'
+            } elseif ($script:PanelPasswordNew) {
                 Write-Host '     Generated on this PC just now, for this server only.'
+                Write-Host '     You can pick your own in the panel; it is offered right'
+                Write-Host '     under the introduction on the admin page.'
             } else {
                 Write-Host '     This is the password from when the server was first'
-                Write-Host '     installed. It has not been changed.'
+                Write-Host '     installed. It has not been changed. You can pick your'
+                Write-Host '     own in the panel, under the introduction.'
             }
             Write-Host "     It is also kept in $(Join-Path $script:InstallDir '.env')"
             Write-Host '     so you can look it up again.'
