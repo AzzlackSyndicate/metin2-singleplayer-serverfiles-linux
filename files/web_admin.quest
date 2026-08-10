@@ -290,7 +290,45 @@ quest web_admin begin
 									if bonus == nil then
 										result = "bad_args"
 									else
-										affect.add_collect(mov, bonus, secs)
+										-- Take our own effects off first.
+										-- add_collect only ever ADDS: setting
+										-- a second speed stacked it on the
+										-- first, and "Normal (reset)" sends a
+										-- bonus of 0, which added nothing and
+										-- removed nothing. Once fast, always
+										-- fast, and only ever faster.
+										--
+										-- remove_collect matches on the VALUE,
+										-- not just the apply type, so every
+										-- value this panel can send has to be
+										-- named here. They are the four in
+										-- SPEED_LOC in admin_panel.py, plus 0,
+										-- which the old code wrote on every
+										-- reset; add a preset there and it
+										-- belongs here too. Naming them rather
+										-- than using remove_all_collect is
+										-- deliberate: that would also strip
+										-- potions, buffs and anything else the
+										-- player earned.
+										--
+										-- The loop is not belt and braces: the
+										-- C++ side stops at the FIRST matching
+										-- affect and removes that one only, so
+										-- a character carrying a stack from
+										-- before this fix needs one pass per
+										-- row. Removing something that is not
+										-- there costs a list walk and nothing
+										-- else, so this also cleans up as a
+										-- side effect of the next speed change.
+										for wa_i = 1, 8 do
+											affect.remove_collect(mov, 0)
+											affect.remove_collect(mov, 30)
+											affect.remove_collect(mov, 60)
+											affect.remove_collect(mov, 100)
+										end
+										if bonus > 0 then
+											affect.add_collect(mov, bonus, secs)
+										end
 									end
 								else
 									result = "unknown_cmd"

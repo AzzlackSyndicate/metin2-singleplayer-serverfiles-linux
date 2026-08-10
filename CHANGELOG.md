@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.4.1 — 2026-08-10
+
+### Fixed
+
+- Running speed can be changed back. "Normal (reset)" resets it, a slower
+  setting is slower than a faster one, and characters that were sped up before
+  this version are put right the next time you set their speed.
+
+---
+
 ## 1.4.0 — 2026-08-10
 
 ### Added
