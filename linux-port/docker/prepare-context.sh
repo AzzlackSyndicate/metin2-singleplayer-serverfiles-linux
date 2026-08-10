@@ -199,9 +199,23 @@ say "in-game helper quest"
 # Without it the panel still works -- it falls back to writing straight into the
 # database after a short wait -- so a missing file is a warning, not a failure.
 mkdir -p "$HERE/game/quest"
-if [ -f "$PANEL_SRC/web_admin.quest" ]; then
+# NOT STAGED BY DEFAULT since 1.3.2. The helper claims a queued action and then
+# switches into the player with pc.select() from a server timer -- where there
+# is no current player to switch back to. The restore leaves the core holding a
+# character pointer it should not have, and the player is disconnected. The
+# claim itself works, so the row stays stamped with the claim marker and the
+# panel reports that marker as an error code.
+#
+# The Lua binding, the compiler stage and the claim protocol are all sound and
+# stay in the build; it is the few lines that act on the player that are wrong.
+# Set M2_INGAME_HELPER=1 to stage it anyway -- on a server nobody else plays on,
+# while working on the fix.
+if [ "${M2_INGAME_HELPER:-0}" = "1" ] && [ -f "$PANEL_SRC/web_admin.quest" ]; then
   cp -a "$PANEL_SRC/web_admin.quest" "$HERE/game/quest/web_admin.quest"
-  info "web_admin.quest -> game/quest/"
+  info "web_admin.quest -> game/quest/  (M2_INGAME_HELPER=1)"
+elif [ -f "$PANEL_SRC/web_admin.quest" ]; then
+  rm -f "$HERE/game/quest/web_admin.quest"
+  info "web_admin.quest NOT staged -- it disconnects players (see 1.3.2)"
 else
   rm -f "$HERE/game/quest/web_admin.quest"
   info "WARNING: $PANEL_SRC/web_admin.quest not found -- the panel's Teleport"

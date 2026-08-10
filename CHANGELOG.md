@@ -17,6 +17,20 @@ every version here.
 
 ---
 
+## 1.3.2 — 2026-08-10
+
+### Fixed
+
+- The in-game helper introduced in 1.3.0 disconnects the character it acts on.
+  It is no longer installed. Items, yang and levels work as they did before
+  1.3.0 — written to the account, visible at the next login — and teleport and
+  running speed refuse instead of dropping the player.
+
+**If you are on 1.3.0 or 1.3.1, update.** Until you do, avoid the buttons on a
+character's page while somebody is playing on them.
+
+---
+
 ## 1.3.1 — 2026-08-10
 
 ### Fixed
