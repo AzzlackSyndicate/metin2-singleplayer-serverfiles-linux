@@ -169,14 +169,15 @@ Open the panel link, enter the password, and you are in.
   one-tap settings, or type any number. Saving restarts the game for under a
   minute.
 - **Players** — every character, with level, yang and which account it belongs
-  to. Click one to give items or yang, or set the level.
+  to. Click one to give items or yang, set the level, or make them a game
+  master.
 - **Password reset link** — when a player forgets their password, type their
   username here and send them the link it makes. It works once and expires after
   24 hours.
 
-The same page also offers **Teleport** and **Running speed**. **Neither of those
-two works on a server installed this way** — see *The honest limits* below.
-Everything else on the page does.
+The same page also offers **Teleport**, **Running speed** and **Game master**.
+The first two need the player to be logged in at the time; the panel says so
+when they are not. See *The honest limits* below.
 
 Almost every button and field has an explanation when you hover the mouse over
 it, in **English, German and Turkish**.
@@ -257,6 +258,11 @@ sell you anything. So:
   believe, and a speed buff only exists while the character does. So if the
   player is offline the panel tells you so instead of pretending. The technical
   detail is in [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md).
+- **Taking a game master rank away needs a logout.** Giving one works there and
+  then, even mid-game. Removing one does not: the game re-reads its list of game
+  masters and re-applies the ranks in it, and somebody who has just been taken
+  out is no longer in that list to be visited. They keep the commands until they
+  log out and back in.
 - **Items, yang and levels take a moment.** These go straight into the database,
   which the game only reads when a character is loaded — so the player has to
   log out and back in before they appear. The panel says so rather than

@@ -1372,6 +1372,16 @@ downloaded server files, the client -- is kept either way.
     Set-EnvValue $envPath 'M2_DB_PASSWORD'      $dbPw
     if ($panelPw) { Set-EnvValue $envPath 'M2_PANEL_PASSWORD' $panelPw }
 
+    # The password on the game cores' admin socket, which the panel's game
+    # master ranks travel over. It used to be empty -- and an empty one does not
+    # disable the socket, it makes an EMPTY line the correct password, which
+    # grants SHUTDOWN and DC to anything that can reach a core. Only 127.0.0.1
+    # can, here and on Linux both, but that is a narrow margin to leave lying
+    # around. Generated once and then kept.
+    $adminPw = Get-EnvValue $envPath 'M2_ADMINPAGE_PASSWORD'
+    if (-not $adminPw) { $adminPw = New-Secret }
+    Set-EnvValue $envPath 'M2_ADMINPAGE_PASSWORD' $adminPw
+
     # Everything points at this computer and nowhere else.
     Set-EnvValue $envPath 'M2_PUBLIC_ADDRESS'   '127.0.0.1'
     Set-EnvValue $envPath 'M2_CLIENT_ADDRESS'   '127.0.0.1'

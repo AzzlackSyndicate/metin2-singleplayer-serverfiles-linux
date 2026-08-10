@@ -244,6 +244,11 @@ boot_cores() {
 HAVE_RATES=0
 command -v m2-rates >/dev/null 2>&1 && HAVE_RATES=1
 
+# Game master ranks the panel hands over the same way. Absent on an image built
+# before this existed, hence the same guard rather than an assumption.
+HAVE_GM=0
+command -v m2-gm >/dev/null 2>&1 && HAVE_GM=1
+
 rates_change() {
   local rc
   if ! m2-rates apply; then
@@ -314,6 +319,11 @@ while :; do
     [ "$rates_rc" = "10" ] && rates_change
     [ "$SHUTTING_DOWN" = "0" ] || break
   fi
+
+  # Did somebody change a game master rank in the panel?  Unlike the rates this
+  # needs no restart -- it is one text command on a core's admin socket -- so
+  # m2-gm does the whole job itself and there is nothing to react to here.
+  [ "$HAVE_GM" = "1" ] && m2-gm poll || true
 
   for name in "${CORE_ORDER[@]}"; do
     pid="${CORE_PID[$name]:-}"

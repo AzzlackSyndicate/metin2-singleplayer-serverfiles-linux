@@ -373,6 +373,36 @@ RATES_STATUS = _env_path("M2PANEL_RATES_STATUS", os.path.join(PANEL_DIR, "rates.
 RATE_NAMES   = ("exp", "drop", "yang")
 RATE_MIN, RATE_MAX = 1, 10000
 
+# ---- game master ranks ------------------------------------------------------
+# Granting a rank is one row in common.gmlist, but the game reads that table
+# into memory when it boots and never looks at it again, so the row on its own
+# changes nothing until the next restart. Telling the running server means
+# reaching its admin socket, and the panel deliberately cannot: that socket
+# accepts SHUTDOWN and DC, and this is the process facing the internet.
+#
+# So, the rates pattern once more (see the long note above UPDATE_APPLY): the
+# panel drops a request in a directory the game container watches, and m2-gm on
+# the other side does the one fixed thing it knows how to do. Nothing in the
+# file tells it what to run -- there is one verb and it is spelled out in
+# m2-gm's own source.
+GM_SPOOL   = _env_path("M2PANEL_GM_SPOOL", "/opt/m2spool")
+GM_REQUEST = os.path.join(GM_SPOOL, "gm.request")
+
+def gm_ask_for_reload():
+    """Ask the game container to re-read the GM list. True when the request was
+    written -- which is not the same as it having happened yet, and the caller
+    must not claim otherwise."""
+    try:
+        tmp = GM_REQUEST + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("id=%d-%d\ntime=%d\n" % (int(time.time()), os.getpid(), int(time.time())))
+        os.replace(tmp, GM_REQUEST)
+        return True
+    except OSError:
+        # No spool mounted, or read-only. Worth reporting to the operator, not
+        # worth losing the row that was just written.
+        return False
+
 CONF_PATH = _env_path("M2PANEL_CONF", "/usr/local/etc/m2panel.conf")
 REQUIRED_CONF = ("flask_secret", "db_user", "db_pass", "salt", "pass_hash")
 
@@ -1126,6 +1156,19 @@ T = {
  "ingame_only":  {"en":"(works while the player is in game)","de":"(nur wenn der Spieler online ist)","tr":"(oyuncu oyundayken çalışır)"},
  "speed":        {"en":"🏃 Running speed","de":"🏃 Laufgeschwindigkeit","tr":"🏃 Koşma hızı"},
  "apply":        {"en":"🏃 Apply","de":"🏃 Anwenden","tr":"🏃 Uygula"},
+ "gm_title":     {"en":"🛡️ Game master","de":"🛡️ Spielleiter","tr":"🛡️ Oyun yöneticisi"},
+ "gm_apply":     {"en":"🛡️ Set rank","de":"🛡️ Rang setzen","tr":"🛡️ Rütbeyi ayarla"},
+ "gm_none":      {"en":"Normal player (no rank)","de":"Normaler Spieler (kein Rang)","tr":"Normal oyuncu (rütbe yok)"},
+ "gm_now":       {"en":"Currently: {rank}","de":"Aktuell: {rank}","tr":"Şu an: {rank}"},
+ "gm_granted":   {"en":"{name} is now {rank}. It applies right away, in game.",
+                  "de":"{name} ist jetzt {rank}. Das gilt sofort, im laufenden Spiel.",
+                  "tr":"{name} artık {rank}. Bu, oyun içinde hemen geçerli olur."},
+ "gm_removed":   {"en":"{name} is a normal player again. They keep the commands until they log out and back in.",
+                  "de":"{name} ist wieder normaler Spieler. Die Befehle bleiben ihm, bis er sich aus- und wieder einloggt.",
+                  "tr":"{name} yeniden normal oyuncu. Çıkıp tekrar girene kadar komutlar onda kalır."},
+ "gm_noreload":  {"en":"Saved, but the game server could not be told. It will take effect the next time the server starts.",
+                  "de":"Gespeichert, aber der Spielserver konnte nicht benachrichtigt werden. Es wirkt beim nächsten Serverstart.",
+                  "tr":"Kaydedildi, ancak oyun sunucusuna bildirilemedi. Sunucu bir sonraki başlangıçta geçerli olacak."},
  "cat_all":      {"en":"All","de":"Alle","tr":"Hepsi"},
  "cat_weapon":   {"en":"Weapons","de":"Waffen","tr":"Silahlar"},
  "cat_armor":    {"en":"Armor","de":"Rüstung","tr":"Zırhlar"},
@@ -1421,6 +1464,9 @@ T = {
  "tip_speed":    {"en":"Changes how fast the character runs. 100 is normal; this only works while they are in game.",
                   "de":"Ändert, wie schnell der Charakter läuft. 100 ist normal; das geht nur, solange er im Spiel ist.",
                   "tr":"Karakterin ne kadar hızlı koştuğunu değiştirir. 100 normaldir; sadece oyundayken çalışır."},
+ "tip_gm":       {"en":"Gives this character the in-game admin commands, typed into the chat box as /command. Granting works immediately; taking it away needs the player to log out and back in.",
+                  "de":"Gibt diesem Charakter die Admin-Befehle im Spiel, die als /befehl ins Chatfenster getippt werden. Vergeben wirkt sofort; Entziehen wirkt erst, wenn der Spieler sich aus- und wieder einloggt.",
+                  "tr":"Bu karaktere, sohbet kutusuna /komut olarak yazılan oyun içi yönetici komutlarını verir. Vermek hemen etkilidir; almak için oyuncunun çıkıp tekrar girmesi gerekir."},
  "tip_rates":    {"en":"Experience, item drops and yang for the whole server. Saving restarts the game for under a minute.",
                   "de":"Erfahrung, Item-Drops und Yang für den ganzen Server. Beim Speichern startet das Spiel für weniger als eine Minute neu.",
                   "tr":"Tüm sunucu için tecrübe, eşya düşme oranı ve yang. Kaydettiğinde oyun bir dakikadan kısa bir süre yeniden başlar."},
@@ -1667,6 +1713,30 @@ SPEED_LOC = [
   ("💨", {"en":"Very Fast (+60%)","de":"Sehr schnell (+60%)","tr":"Çok Hızlı (+60%)"}, 60),
   ("⚡", {"en":"Light Speed (+100%)","de":"Lichtgeschwindigkeit (+100%)","tr":"Işık Hızı (+100%)"}, 100),
 ]
+# The game master ranks, in the order the game itself grades them. The strings
+# are not ours to choose: common.gmlist.mAuthority is an ENUM, and a value the
+# server does not recognise is silently dropped when it reads the list, which
+# would look exactly like the rank being granted and then not working. WIZARD
+# exists in the server's C++ but not in the ENUM, so it cannot be offered here.
+#
+# LOW_WIZARD is first because it is the one to hand out: it carries the
+# everyday commands and not the ones that rewrite the world.
+GM_RANKS = [
+  ("LOW_WIZARD",  {"en":"Helper — the everyday commands",
+                   "de":"Helfer — die alltäglichen Befehle",
+                   "tr":"Yardımcı — günlük komutlar"}),
+  ("GOD",         {"en":"Game master — nearly everything",
+                   "de":"Spielleiter — fast alles",
+                   "tr":"Oyun yöneticisi — neredeyse her şey"}),
+  ("HIGH_WIZARD", {"en":"High game master",
+                   "de":"Oberspielleiter",
+                   "tr":"Üst oyun yöneticisi"}),
+  ("IMPLEMENTOR", {"en":"Owner — every command there is",
+                   "de":"Betreiber — jeder existierende Befehl",
+                   "tr":"Sahip — var olan her komut"}),
+]
+GM_RANK_SET = {r for r, _ in GM_RANKS}
+
 # Ready-made rate settings, aimed at a quiet server where questing is the point.
 # The middle one is the setting most people asking for this actually want: enough
 # of a push that a quest chain carries you along, without turning the game off.
@@ -1727,6 +1797,16 @@ def warp_presets_i18n():
 def speed_presets_i18n():
     lg = lang()
     return [("%s %s" % (e, n.get(lg, n["en"])), spd) for e, n, spd in SPEED_LOC]
+def gm_ranks_i18n():
+    lg = lang()
+    return [(rank, n.get(lg, n["en"])) for rank, n in GM_RANKS]
+def gm_rank_label(rank):
+    """The readable name of a rank, for the line that says what somebody is."""
+    lg = lang()
+    for r, n in GM_RANKS:
+        if r == rank:
+            return n.get(lg, n["en"])
+    return rank
 
 def db():
     return pymysql.connect(host=CONF.get("db_host", "127.0.0.1"), user=CONF["db_user"],
@@ -2455,6 +2535,17 @@ TPL_PLAYER = BASE.replace("__BODY__", """
 {% for label, spd in speed_presets %}<option value="{{spd}}">{{label}}</option>{% endfor %}
 </select>
 <button class="big" title="{{t('tip_speed')}}">{{t('apply')}}</button></form></div>
+
+<div class="card"><h3 class="help" title="{{t('tip_gm')}}">{{t('gm_title')}}</h3>
+{% if gm_rank %}<p class="muted">{{t('gm_now').format(rank=gm_rank_label(gm_rank))}}</p>{% endif %}
+<form method="post" action="{{url_for('set_gm')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+<input type="hidden" name="pid" value="{{p.id}}">
+<select name="rank" title="{{t('tip_gm')}}">
+<option value=""{% if not gm_rank %} selected{% endif %}>{{t('gm_none')}}</option>
+{% for rank, label in gm_ranks %}<option value="{{rank}}"{% if rank == gm_rank %} selected{% endif %}>{{label}}</option>{% endfor %}
+</select>
+<button class="big" title="{{t('tip_gm')}}">{{t('gm_apply')}}</button></form></div>
 
 <div class="card"><h3 class="help" title="{{t('tip_inv')}}">🎒 {{t('inv_title')}}{% if inv %} <span class="muted">({{inv|length}})</span>{% endif %}</h3>
 {% if inv is none %}<p class="muted">{{t('db_down')}}</p>
@@ -3236,7 +3327,27 @@ def player(pid):
                                   emoji=lambda j: JOB_EMOJI.get(j, "🧑"),
                                   cats=CATS,
                                   gold_presets=gold_presets_i18n(), warp_presets=warp_presets_i18n(),
-                                  speed_presets=speed_presets_i18n())
+                                  speed_presets=speed_presets_i18n(),
+                                  gm_ranks=gm_ranks_i18n(), gm_rank=gm_rank_of(p["name"]),
+                                  gm_rank_label=gm_rank_label)
+
+def gm_rank_of(name):
+    """The rank this character holds in common.gmlist, or None for a normal
+    player. Also None when the table cannot be read: the card then just offers
+    the choice, which is a better failure than claiming somebody is nobody."""
+    try:
+        with db() as c, c.cursor() as cur:
+            cur.execute("SELECT mAuthority AS a FROM common.gmlist WHERE mName=%s LIMIT 1",
+                        (name,))
+            row = cur.fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    # PLAYER is in the ENUM and means "no rank": the server skips those rows
+    # when it reads the list. Anything else unrecognised is treated the same.
+    rank = (row["a"] or "").strip()
+    return rank if rank in GM_RANK_SET else None
 
 def item_qty(raw):
     """Return a stack size the game can actually store (1..65535), or None if invalid."""
@@ -3389,6 +3500,90 @@ def action():
         flash(str(e), "error")
     except Exception:
         flash(t("act_unexpected"), "error")
+    return redirect(url_for("player", pid=pid))
+
+@app.route("/gm", methods=["POST"])
+@login_required
+def set_gm():
+    """Give a character the in-game admin commands, or take them away.
+
+    Unlike everything on the action page this does not go through the in-game
+    helper, and it does not need the player to be online: the game reads its
+    list of game masters from common.gmlist, so the row IS the grant. What the
+    helper cannot do is make the running server notice, which is what the
+    reload request at the bottom is for.
+
+    Two details of the server's own matching decide the shape of the row:
+
+      * The list is keyed on the CHARACTER name, and on this build the account
+        must match as well (locale/english takes the branch in gm_new_get_level
+        that checks the account and skips the host check). Both go in the row;
+        one without the other silently grants nothing.
+
+      * mServerIP stays 'ALL', and that one is not tidiness. The db core asks
+        for rows matching 'ALL' or its own address. At boot its own address is
+        right; on a reload it is garbage, because the game core sends the
+        reload packet with no body (DBPacket(HEADER_GD_RELOAD_ADMIN, 0, NULL,
+        0)) and the db core reads szIP out of it anyway. The live server has
+        been seen asking for mServerIP='icate58' -- a fragment of a character
+        name left in the buffer. Rows pinned to an address would therefore be
+        found at boot and lost, or not, at every reload after it. 'ALL' matches
+        either way.
+    """
+    try:
+        pid = int(request.form.get("pid", ""))
+    except (TypeError, ValueError):
+        flash(t("not_found"), "error")
+        return redirect(url_for("dash"))
+
+    rank = (request.form.get("rank", "") or "").strip()
+    if rank and rank not in GM_RANK_SET:
+        # Not reachable from the form; reachable from a hand-made POST, and an
+        # unknown value would be stored happily by MySQL only to be dropped by
+        # the server at boot.
+        flash(t("act_novalue"), "error")
+        return redirect(url_for("player", pid=pid))
+
+    try:
+        with db() as c, c.cursor() as cur:
+            cur.execute("SELECT p.name AS name, a.login AS login "
+                        "FROM player.player p "
+                        "LEFT JOIN account.account a ON a.id = p.account_id "
+                        "WHERE p.id=%s", (pid,))
+            row = cur.fetchone()
+            if not row:
+                flash(t("not_found"), "error")
+                return redirect(url_for("dash"))
+            name  = row["name"]
+            login = row["login"] or ""
+
+            # Replace rather than update: mName has no unique key, and a table
+            # that has collected two rows for one character would otherwise
+            # keep the older one alive underneath the new rank.
+            cur.execute("DELETE FROM common.gmlist WHERE mName=%s", (name,))
+            if rank:
+                cur.execute(
+                    "INSERT INTO common.gmlist "
+                    "(mAccount, mName, mContactIP, mServerIP, mAuthority) "
+                    "VALUES (%s, %s, '', 'ALL', %s)", (login, name, rank))
+    except Exception:
+        flash(t("db_down"), "error")
+        return redirect(url_for("player", pid=pid))
+
+    told = gm_ask_for_reload()
+    if not told:
+        flash(t("gm_noreload"), "error")
+    elif rank:
+        # The reload makes the game re-read the list and, for every character
+        # named in it who happens to be online, apply the rank there and then.
+        flash(t("gm_granted").format(name=name, rank=gm_rank_label(rank)))
+    else:
+        # Removal is the asymmetric case. The reload hands the server the new
+        # list, but the server only re-applies ranks for characters IN that
+        # list -- one that has just been taken out is not visited, so a player
+        # who is online keeps the commands until they log out. Saying so is the
+        # difference between a known limit and a bug report.
+        flash(t("gm_removed").format(name=name))
     return redirect(url_for("player", pid=pid))
 
 if __name__ == "__main__":

@@ -13,8 +13,8 @@ It is three things that grew out of each other:
    MariaDB, the panel and a client builder. `docker compose up -d --build`, or
    one installer command that does everything including the firewall.
 3. **A web admin panel** — Flask, in English, German and Turkish. Give items,
-   yang and levels; set experience/drop/yang rates; hand out password-reset
-   links. Players use the same site to register and to download a client that
+   yang and levels; set experience/drop/yang rates; make somebody a game master;
+   hand out password-reset links. Players use the same site to register and to download a client that
    already points at your server.
 
 This is a hobby project aimed at small private and single-player servers. It is
@@ -222,11 +222,17 @@ you:
   Items, yang and levels work either way. See
   [files/ADD_SQL_BINDING.md](files/ADD_SQL_BINDING.md), including how to check
   the in-game helper is alive without a game client.
-- **The one feature in the port patch has not been tested with a player in it.**
-  `mysql_direct_query` and the quest that uses it are verified as far as they
-  can be without a game client: the cores load the quest, start its poll timer
-  at boot, and move a queued row out of `pending` on their own. Whether a
-  teleport actually moves a character has been reasoned about, not observed.
+- **Teleport is the one action nobody has confirmed from a game client.** Items,
+  yang, levels and running speed have been exercised on a live server and do
+  what they say. The teleport path is the same one they take and the cores show
+  it running, but "the character ended up over there" has been reasoned about,
+  not watched.
+- **Game master ranks: granting is instant, removing is not.** A rank is a row
+  in `common.gmlist`, which the game reads when it boots. The panel writes the
+  row and then asks the game container to make the server re-read the table, so
+  a grant reaches a character who is already logged in. A removal does not: the
+  server re-applies ranks only for the characters still in the list, so anybody
+  just taken out of it keeps the commands until their next login.
 - **The panel runs on Flask's development server.** Fine for the few people
   administering a private server; not a public web server. The Linux installer
   puts nginx in front of it when you give it a domain, which takes the worst

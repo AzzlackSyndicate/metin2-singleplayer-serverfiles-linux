@@ -1344,6 +1344,21 @@ write_env() {
     env_set "$_env" M2_DOMAIN    "$DOMAIN"
     env_set "$_env" M2_TLS_EMAIL "$TLS_EMAIL"
 
+    # The password on the game cores' admin socket -- the one the panel's game
+    # master ranks travel over. Generated once and kept, like the others.
+    #
+    # This is not only a feature switch. The setting used to be empty, and an
+    # empty password does not mean "no admin socket": the core compares the
+    # line it is sent against the configured password, so an EMPTY line matched
+    # and granted full rights -- SHUTDOWN, DC, NOTICE, the lot. Today that is
+    # contained, because the socket only answers M2_ADMINPAGE_IP and that is
+    # 127.0.0.1. But it is one env var away from being an unauthenticated
+    # remote shutdown button, and nobody widening an IP allowlist expects to be
+    # turning off the password at the same time.
+    _adminpw=$(env_get "$_env" M2_ADMINPAGE_PASSWORD || true)
+    [ -n "$_adminpw" ] || _adminpw=$(gen_secret)
+    env_set "$_env" M2_ADMINPAGE_PASSWORD "$_adminpw"
+
     # Tell the panel whether anybody but this machine can reach the server, so
     # its introduction says "give people this address" or "nobody else can join"
     # accordingly. Note this is NOT the same question as the panel's bind

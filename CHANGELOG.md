@@ -17,6 +17,23 @@ every version here.
 
 ---
 
+## 1.6.0 — 2026-08-10
+
+### Added
+
+- Game master ranks on the player page. Pick a rank to give somebody the
+  in-game admin commands, or set them back to a normal player. Granting takes
+  effect immediately, even mid-game; taking a rank away applies at the player's
+  next login.
+
+### Fixed
+
+- The game cores' admin interface had no password, which made an empty one
+  correct. It now gets a generated password, like the others.
+- The tutorial no longer claims that teleport and running speed do not work.
+
+---
+
 ## 1.5.0 — 2026-08-10
 
 ### Changed

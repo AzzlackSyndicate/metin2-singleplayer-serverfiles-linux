@@ -233,6 +233,12 @@ services:
       M2PANEL_RATES_STATUS: "/opt/m2spool/rates.status"
       M2PANEL_RATES_SPOOL: "/opt/m2spool"
 
+      # Game master ranks travel over the same spool: the panel writes the row
+      # into common.gmlist itself and then drops a note here, and m2-gm in the
+      # game container tells the running server to re-read the list. The panel
+      # is kept away from that socket on purpose -- it also accepts SHUTDOWN.
+      M2PANEL_GM_SPOOL: "/opt/m2spool"
+
       # Once a day the panel asks the project's repository what the newest
       # published version is, and says so in the admin area when it is behind.
       # This is the ONLY part of this stack that contacts the internet by
