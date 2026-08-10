@@ -1156,6 +1156,7 @@ T = {
  "ingame_only":  {"en":"(works while the player is in game)","de":"(nur wenn der Spieler online ist)","tr":"(oyuncu oyundayken çalışır)"},
  "speed":        {"en":"🏃 Running speed","de":"🏃 Laufgeschwindigkeit","tr":"🏃 Koşma hızı"},
  "apply":        {"en":"🏃 Apply","de":"🏃 Anwenden","tr":"🏃 Uygula"},
+ "srch_more":    {"en":"⌄ Show more","de":"⌄ Mehr anzeigen","tr":"⌄ Daha fazla göster"},
  "gm_title":     {"en":"🛡️ Game master","de":"🛡️ Spielleiter","tr":"🛡️ Oyun yöneticisi"},
  "gm_apply":     {"en":"🛡️ Set rank","de":"🛡️ Rang setzen","tr":"🛡️ Rütbeyi ayarla"},
  "gm_none":      {"en":"Normal player (no rank)","de":"Normaler Spieler (kein Rang)","tr":"Normal oyuncu (rütbe yok)"},
@@ -1873,42 +1874,102 @@ def expand_query(words):
             out.append(de)
     return out
 
+ITEM_PAGE     = 40     # how many the box shows before it offers to show more
+ITEM_PAGE_MAX = 400    # and how far "show more" may go
+
 @app.route("/api/items")
 def api_items():
-    """Live item search for the give-item box. Returns up to 40 matches."""
+    """Live item search for the give-item box.
+
+    Answers {"items": [...], "more": bool}. `more' is what puts the "show
+    more" line at the bottom of the list: without it the box silently stopped
+    at forty and looked as though nothing else existed.
+
+    Three ways to search, because people use all three:
+
+      * a vnum -- "299" or "#299". The exact one first, then the ones that
+        start with those digits, so "29" offers 29, 290, 291...
+      * a name, in the language the panel is in.
+      * a name in one of the other two. Every item's German and Turkish names
+        are keywords beside the displayed one, so they find it too.
+
+    Every word typed has to appear somewhere, rather than the old count of how
+    many did: searching "Full Moon Sword" used to list Half Moon Sword too,
+    because two words out of three matched and nothing insisted on the third.
+    A word the index has never heard of would then find nothing at all, so if
+    the strict pass comes back empty the loose one runs instead: "full moon
+    sord" still offers the moon swords. One misspelt word on its own finds
+    nothing either way -- there is no fuzzy matching here, and pretending
+    otherwise in a comment would be worse than the gap.
+    """
     if not session.get("auth"):
-        return jsonify([])
+        return jsonify({"items": [], "more": False})
     q = request.args.get("q", "").strip().lower()
     cat = request.args.get("cat", "all")
+    try:
+        limit = int(request.args.get("limit", ITEM_PAGE))
+    except (TypeError, ValueError):
+        limit = ITEM_PAGE
+    limit = max(1, min(limit, ITEM_PAGE_MAX))
 
-    # Word by word, not the whole box as one string. The names in the index are
-    # German; the English and Turkish words are keywords beside them, so
-    # "Vollmondschwert" is one string but "Full Moon Sword" is three, and only
-    # two of them are in the index. Matching the phrase found nothing and the
-    # box looked broken to anybody not typing German.
-    #
-    # Items are ranked by how many of the typed words they match, so the more
-    # of the name somebody gets right the higher the item they meant climbs --
-    # and a word the index has never heard of costs a place instead of hiding
-    # everything.
-    words = [w for w in expand_query(q.split()) if w]
-    out = []
-    for it in ITEMS:
-        if cat != "all" and it["c"] != cat:
-            continue
-        if not words:
-            out.append((0, it["v"], it))
-            continue
-        if q == str(it["v"]):                 # an exact vnum always wins
-            out.append((-99, it["v"], it))
-            continue
+    pool = [it for it in ITEMS if cat == "all" or it["c"] == cat]
+
+    if not q:
+        return jsonify({"items": pool[:limit], "more": len(pool) > limit})
+
+    # ---- a number, with or without the # people put in front of it ----------
+    digits = q.lstrip("#").strip()
+    if digits.isdigit():
+        want = int(digits)
+        exact  = [it for it in pool if it["v"] == want]
+        prefix = [it for it in pool if it["v"] != want and str(it["v"]).startswith(digits)]
+        found = exact + prefix
+        return jsonify({"items": found[:limit], "more": len(found) > limit})
+
+    # ---- a name ------------------------------------------------------------
+    terms = [w for w in q.split() if w]
+
+    def strict(it):
+        """Position in the list, or None when a typed word is missing.
+
+        The word counts as present if the index has it in the language it was
+        typed in OR in German, which is what most of the index used to be and
+        what many keywords still are."""
         hay = it["n"].lower() + " " + it.get("k", "")
-        hits = sum(1 for w in words if w in hay)
-        if hits:
-            out.append((-hits, it["v"], it))
+        for w in terms:
+            de = _DE.get(w)
+            if w in hay or (de and de in hay):
+                continue
+            return None
+        # Matched. Now order by how much of it was the name itself, so an exact
+        # name beats one that merely contains the words, which beats an item
+        # found only through its other-language keywords.
+        name = it["n"].lower()
+        if name == q:              return 0
+        if name.startswith(q):     return 1
+        if q in name:              return 2
+        if all(w in name for w in terms): return 3
+        return 4
 
-    out.sort(key=lambda r: (r[0], r[1]))
-    return jsonify([r[2] for r in out[:40]])
+    out = []
+    for it in pool:
+        rank = strict(it)
+        if rank is not None:
+            out.append((rank, len(it["n"]), it["v"], it))
+
+    if not out:
+        # Nothing matched every word. Fall back to the old behaviour: rank by
+        # how many words each item does match, so a misspelling still shows the
+        # neighbourhood of what was meant.
+        words = [w for w in expand_query(terms) if w]
+        for it in pool:
+            hay = it["n"].lower() + " " + it.get("k", "")
+            hits = sum(1 for w in words if w in hay)
+            if hits:
+                out.append((-hits, len(it["n"]), it["v"], it))
+
+    out.sort(key=lambda r: (r[0], r[1], r[2]))
+    return jsonify({"items": [r[3] for r in out[:limit]], "more": len(out) > limit})
 
 @app.route("/api/status")
 def api_status():
@@ -2479,21 +2540,32 @@ TPL_PLAYER = BASE.replace("__BODY__", """
  var s=document.getElementById('itemSearch'),c=document.getElementById('itemCat'),
      r=document.getElementById('itemResults'),v=document.getElementById('itemVnum'),
      ch=document.getElementById('itemChosen'),tmr=null;
- function load(){
+ var shown=40;
+ function load(n){
+   shown=n||40;
    var q=encodeURIComponent(s.value),cat=c.value;
-   fetch('/api/items?q='+q+'&cat='+cat).then(x=>x.json()).then(list=>{
+   fetch('/api/items?q='+q+'&cat='+cat+'&limit='+shown).then(x=>x.json()).then(res=>{
      r.innerHTML='';
-     list.forEach(function(it){
+     res.items.forEach(function(it){
        var b=document.createElement('div');
        b.style.cssText='padding:8px 10px;border-bottom:1px solid #3a3222;cursor:pointer';
        b.textContent=it.n+'  ·  #'+it.v;
        b.onclick=function(){v.value=it.v;ch.innerHTML='✅ '+it.n+' (#'+it.v+')';r.innerHTML='';s.value=it.n;};
        r.appendChild(b);
      });
+     /* Only when there really is more. A "show more" that shows nothing is
+        worse than no button, so this follows the server's own count. */
+     if(res.more){
+       var m=document.createElement('div');
+       m.style.cssText='padding:8px 10px;cursor:pointer;text-align:center;font-weight:600';
+       m.textContent={{t('srch_more')|tojson}};
+       m.onclick=function(){load(shown+120);};
+       r.appendChild(m);
+     }
    });
  }
- s.addEventListener('input',function(){clearTimeout(tmr);tmr=setTimeout(load,200);});
- c.addEventListener('change',load);
+ s.addEventListener('input',function(){clearTimeout(tmr);tmr=setTimeout(function(){load(40);},200);});
+ c.addEventListener('change',function(){load(40);});
  document.getElementById('itemForm').addEventListener('submit',function(e){
    if(!v.value){e.preventDefault();ch.innerHTML='⚠️ '+s.getAttribute('placeholder');}
  });

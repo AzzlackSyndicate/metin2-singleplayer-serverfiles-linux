@@ -17,6 +17,27 @@ every version here.
 
 ---
 
+## 1.7.0 — 2026-08-10
+
+### Fixed
+
+- The item search shows the names your game actually uses. The index had been
+  built from the German name file while the server and the client use the
+  English one, so nothing you saw in game matched what the panel offered.
+- Searching for several words now needs all of them. "Full Moon Sword" no
+  longer offers Half Moon Sword as well.
+- Item numbers work in the search box, with or without the `#`. Typing `299`
+  or `#299` finds that item, and `29` offers everything starting with it.
+
+### Added
+
+- **Show more** at the bottom of the item list, which used to stop at forty
+  without saying so.
+- German and Turkish item names are search keywords, so an item can be found
+  by whichever of the three names you know.
+
+---
+
 ## 1.6.0 — 2026-08-10
 
 ### Added
