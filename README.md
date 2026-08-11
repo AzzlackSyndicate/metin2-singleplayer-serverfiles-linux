@@ -13,8 +13,9 @@ It is three things that grew out of each other:
    MariaDB, the panel and a client builder. `docker compose up -d --build`, or
    one installer command that does everything including the firewall.
 3. **A web admin panel** — Flask, in English, German and Turkish. Give items,
-   yang and levels; set experience/drop/yang rates; make somebody a game master;
-   hand out password-reset links. Players use the same site to register and to download a client that
+   yang and levels; set experience/drop/yang rates; put the game itself into any
+   of fifteen languages; make somebody a game master; hand out password-reset
+   links. Players use the same site to register and to download a client that
    already points at your server.
 
 This is a hobby project aimed at small private and single-player servers. It is

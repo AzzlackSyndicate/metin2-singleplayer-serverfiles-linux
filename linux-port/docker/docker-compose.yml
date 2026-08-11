@@ -239,6 +239,13 @@ services:
       # is kept away from that socket on purpose -- it also accepts SHUTDOWN.
       M2PANEL_GM_SPOOL: "/opt/m2spool"
 
+      # And the language the game speaks. The panel asks; m2-lang in the game
+      # container swaps the four files and restarts the cores, because they read
+      # them only while they boot. lang.status is how the panel knows which
+      # language is live -- including on the download page, where it is the one
+      # thing a player cannot find out before downloading a gigabyte.
+      M2PANEL_LANG_SPOOL: "/opt/m2spool"
+
       # Once a day the panel asks the project's repository what the newest
       # published version is, and says so in the admin area when it is behind.
       # This is the ONLY part of this stack that contacts the internet by
@@ -340,6 +347,12 @@ services:
       M2_CLIENT_FORCE: "${M2_CLIENT_FORCE:-}"
       M2_CLIENT_KEEP_ARCHIVE: "${M2_CLIENT_KEEP_ARCHIVE:-1}"
       M2_CLIENT_VERIFY: "${M2_CLIENT_VERIFY:-quick}"
+
+      # The language the finished client starts in. Normally not set: the
+      # builder reads it out of the game's own lang.status, which is the only
+      # copy that cannot go stale when somebody switches the language in the
+      # panel. Set this only to build a client for a different server.
+      M2_CLIENT_LANG: "${M2_CLIENT_LANG:-}"
       M2_CLIENT_MIN_FREE_MB: "${M2_CLIENT_MIN_FREE_MB:-7000}"
 
       TZ: "${M2_TZ:-UTC}"
@@ -356,6 +369,11 @@ services:
       # where the panel would serve it, and `docker compose down -v' does not
       # cost a fresh gigabyte-and-a-half download unless you meant it to.
       - client-cache:/var/cache/m2client
+
+      # Read-only, and for one line: lang.status says which language the game
+      # is speaking, so the client can be built to match without anybody having
+      # to keep a second setting in step with the first.
+      - rates-spool:/opt/m2spool:ro
 
       # Somewhere to hand the tool a file yourself. Put the server-file archive
       # (or a ready-made Client.zip) in ./client-archive next to this file and

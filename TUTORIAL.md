@@ -176,6 +176,11 @@ Open the panel link, enter the password, and you are in.
 - **Players** — every character, with level, yang and which account it belongs
   to. Click one to give items or yang, set the level, or make them a game
   master.
+- **Game language** — the language the server speaks: quest text, system
+  messages, item and monster names. Fifteen of them ship with the server files.
+  Changing it restarts the game for well under a minute. The client is the other
+  half: new downloads are built to match, and anyone who already has the game
+  renames one file — the panel shows which one.
 - **Password reset link** — when a player forgets their password, type their
   username here and send them the link it makes. It works once and expires after
   24 hours.

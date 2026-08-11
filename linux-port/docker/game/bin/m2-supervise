@@ -249,6 +249,33 @@ command -v m2-rates >/dev/null 2>&1 && HAVE_RATES=1
 HAVE_GM=0
 command -v m2-gm >/dev/null 2>&1 && HAVE_GM=1
 
+# And the language the server speaks, which is the rates story exactly: files
+# that live in the image, a wanted value on the state volume, and cores that
+# only read them while they boot.
+HAVE_LANG=0
+command -v m2-lang >/dev/null 2>&1 && HAVE_LANG=1
+
+lang_change() {
+  local rc
+  if ! m2-lang apply; then
+    # The files were left as they were, so a restart would pick up nothing.
+    # m2-lang has already told the panel why.
+    log "the language was NOT changed -- the cores were left running"
+    return 0
+  fi
+
+  log "language files replaced -- restarting the cores so the game reads them"
+  stop_cores
+  boot_cores; rc=$?
+  if [ "$rc" = "0" ]; then
+    m2-lang publish
+  else
+    log "not every core came back after the language change"
+    m2-lang publish no_restart "some cores did not come back up"
+  fi
+  return 0
+}
+
 rates_change() {
   local rc
   if ! m2-rates apply; then
@@ -282,6 +309,14 @@ if [ "$HAVE_RATES" = "1" ]; then
   m2-rates apply || log "the wanted rates could not be applied -- see /var/log/m2rates.log"
 fi
 
+# The language, for the same reason and in the same place: the four files come
+# back shipped-as-new whenever this container is recreated, so what the operator
+# chose is put back before any core reads them.
+if [ "$HAVE_LANG" = "1" ]; then
+  m2-lang poll || true
+  m2-lang apply || log "the wanted language could not be applied -- see /var/log/m2lang.log"
+fi
+
 boot_cores; boot_rc=$?
 [ "$boot_rc" != "2" ] || exit 1
 
@@ -295,6 +330,17 @@ if [ "$HAVE_RATES" = "1" ]; then
     # would be a guess; this is the state that says "they are saved, the server
     # needs looking at".
     m2-rates publish no_restart "not every core came up on this start"
+  fi
+fi
+
+# And the language, on every start rather than only after a change: this is
+# where the panel learns which one is live. Without it a panel that has never
+# seen a switch has nothing to read and would have to guess.
+if [ "$HAVE_LANG" = "1" ]; then
+  if [ "$boot_rc" = "0" ]; then
+    m2-lang publish
+  else
+    m2-lang publish no_restart "not every core came up on this start"
   fi
 fi
 
@@ -324,6 +370,14 @@ while :; do
   # needs no restart -- it is one text command on a core's admin socket -- so
   # m2-gm does the whole job itself and there is nothing to react to here.
   [ "$HAVE_GM" = "1" ] && m2-gm poll || true
+
+  # Did somebody change the language?  This one does need a restart: the cores
+  # read the four files while they boot and never again.
+  if [ "$HAVE_LANG" = "1" ]; then
+    m2-lang poll; lang_rc=$?
+    [ "$lang_rc" = "10" ] && lang_change
+    [ "$SHUTTING_DOWN" = "0" ] || break
+  fi
 
   for name in "${CORE_ORDER[@]}"; do
     pid="${CORE_PID[$name]:-}"

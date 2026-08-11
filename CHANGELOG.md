@@ -17,6 +17,25 @@ every version here.
 
 ---
 
+## 1.9.0 — 2026-08-11
+
+### Added
+
+- **Game language** on the admin page. The server files carry fifteen
+  languages; pick one and the game speaks it — quest text, system messages,
+  item and monster names. The game restarts for well under a minute.
+- The download page says which language the game is in.
+- After a switch, the panel shows players who already downloaded the game how
+  to change their copy: one file to rename, nothing to download again.
+- The client the panel hands out is built in the server's language.
+
+### Fixed
+
+- The patch log button had two translations, of which only the second was ever
+  used.
+
+---
+
 ## 1.8.0 — 2026-08-10
 
 ### Added

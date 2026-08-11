@@ -758,6 +758,74 @@ patch_address() {
 }
 
 # ---------------------------------------------------------------------------
+#  The language the client starts in
+# ---------------------------------------------------------------------------
+#  The client picks its menus, its item names and its fonts from
+#  pack/locale_XY.epk, and which one it takes is decided by locale.cfg sitting
+#  next to the .exe -- fifteen bytes reading "10000 1252 en".  Every language's
+#  pack and every language's cfg are already inside this zip, so making the
+#  download match the server is a matter of putting the right one in place.
+#
+#  Which language that is comes from the server itself, not from a setting
+#  here: m2-lang writes lang.status into the spool whenever the operator
+#  switches, and that is the only value that cannot go stale.  M2_CLIENT_LANG
+#  overrides it for somebody building a client for a different server.
+#
+#  There is no locale_en.cfg in the pack -- the plain locale.cfg IS English,
+#  exactly as item_names.txt is on the server side.  So the first time this
+#  replaces it, the original is added to the zip AS locale_en.cfg.  That makes
+#  switching back possible, and it gives players the file the panel's
+#  instructions tell them to rename.
+# ---------------------------------------------------------------------------
+LANG_STATUS="${M2_LANG_STATUS:-/opt/m2spool/lang.status}"
+
+patch_language() {
+    _want="${M2_CLIENT_LANG:-}"
+    if [ -z "$_want" ] && [ -f "$LANG_STATUS" ]; then
+        _want=$(sed -n 's/^lang=//p' "$LANG_STATUS" 2>/dev/null | head -1 | tr -d ' \r\n')
+    fi
+    [ -n "$_want" ] || _want=en
+
+    case "$_want" in
+        [a-z][a-z]) : ;;
+        *) warn "'$_want' is not a language code -- the client keeps the language it has"
+           return 0 ;;
+    esac
+
+    step "Setting the client's language to '$_want'"
+
+    rm -rf "$WORK_DIR/lang"
+    mkdir -p "$WORK_DIR/lang" || die "Could not create $WORK_DIR/lang"
+
+    # Keep the shipped English one under a name of its own, once.
+    if ! unzip -l "$BUILT" locale_en.cfg >/dev/null 2>&1; then
+        if unzip -p "$BUILT" locale.cfg > "$WORK_DIR/lang/locale_en.cfg" 2>/dev/null \
+           && [ -s "$WORK_DIR/lang/locale_en.cfg" ]; then
+            ( cd "$WORK_DIR/lang" && zip -q "$BUILT" locale_en.cfg ) \
+                || warn "could not keep a copy of the English locale.cfg"
+            rm -f "$WORK_DIR/lang/locale_en.cfg"
+        else
+            warn "this client has no locale.cfg -- the language is left alone"
+            rm -rf "$WORK_DIR/lang"
+            return 0
+        fi
+    fi
+
+    if ! unzip -p "$BUILT" "locale_${_want}.cfg" > "$WORK_DIR/lang/locale.cfg" 2>/dev/null \
+       || [ ! -s "$WORK_DIR/lang/locale.cfg" ]; then
+        warn "this client carries no locale_${_want}.cfg -- its language is left as it is"
+        rm -rf "$WORK_DIR/lang"
+        return 0
+    fi
+
+    ( cd "$WORK_DIR/lang" && zip -q "$BUILT" locale.cfg ) \
+        || die "Could not write locale.cfg into $BUILT"
+    rm -rf "$WORK_DIR/lang"
+
+    ok "the client will start in '$_want'"
+}
+
+# ---------------------------------------------------------------------------
 #  STAGE 4 -- hand it to the panel
 # ---------------------------------------------------------------------------
 verify_built() {
@@ -906,6 +974,7 @@ cmd_build() {
     fi
 
     patch_address
+    patch_language
 
     if ! verify_built; then
         die "The finished client did not pass its checks, so it was NOT given to the panel." \

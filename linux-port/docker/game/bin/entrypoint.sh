@@ -124,6 +124,11 @@ m2-render-config
 #     Everything else about the rates happens later, in m2-supervise.
 # -----------------------------------------------------------------------------
 m2-rates prepare || log "could not prepare the rate spool (the rates page will say so)"
+# The same, for the language files: this runs as root, and the four files the
+# switch replaces belong to the image and have to be writable by the service
+# account afterwards. Absent on an image built before this existed.
+command -v m2-lang >/dev/null 2>&1 \
+  && { m2-lang prepare || log "could not prepare the language files (the language page will say so)"; }
 
 # -----------------------------------------------------------------------------
 # 3. Resource limits.

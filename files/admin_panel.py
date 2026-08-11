@@ -388,6 +388,72 @@ RATE_MIN, RATE_MAX = 1, 10000
 GM_SPOOL   = _env_path("M2PANEL_GM_SPOOL", "/opt/m2spool")
 GM_REQUEST = os.path.join(GM_SPOOL, "gm.request")
 
+# ---- the language the game speaks -------------------------------------------
+# Not the language of THIS page -- that is the switcher at the top right, and it
+# only changes what the panel says. This is what the SERVER says: quest text,
+# system messages, and the item and mob names it hands out. The pack ships all
+# of it in fifteen languages and the switch is four files; m2-lang in the game
+# container does the swapping and restarts the cores, because they read those
+# files only while they boot.
+#
+# Same spool, same shape as the rates and the game master ranks.
+LANG_SPOOL   = _env_path("M2PANEL_LANG_SPOOL", "/opt/m2spool")
+LANG_REQUEST = os.path.join(LANG_SPOOL, "lang.request")
+LANG_STATUS  = os.path.join(LANG_SPOOL, "lang.status")
+
+# The fifteen the reference server files carry, by the codes their file names
+# use. Named in their own language, which is how a person looks for their own.
+# m2-lang decides what is really on offer -- it checks that all four files exist
+# for a code before offering it -- so this list is labels, not permission.
+GAME_LANGS = [
+    ("en", "English"),   ("de", "Deutsch"),    ("tr", "Türkçe"),
+    ("fr", "Français"),  ("es", "Español"),    ("it", "Italiano"),
+    ("pt", "Português"), ("nl", "Nederlands"), ("pl", "Polski"),
+    ("ro", "Română"),    ("hu", "Magyar"),     ("cz", "Čeština"),
+    ("gr", "Ελληνικά"),  ("dk", "Dansk"),      ("ru", "Русский"),
+]
+GAME_LANG_NAMES = dict(GAME_LANGS)
+
+def lang_status():
+    """The note m2-lang leaves behind. Empty when the game container has never
+    written one -- an older image, or one that has not started yet."""
+    out = {}
+    try:
+        with open(LANG_STATUS, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                k, sep, v = line.partition("=")
+                if sep:
+                    out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+def game_lang():
+    """The language the game is in right now, as a code.
+
+    English when nothing says otherwise: that is what the server files ship as
+    and what an untouched server runs. Reported rather than guessed wherever
+    m2-lang has spoken."""
+    code = (lang_status().get("lang") or "").strip()
+    return code if code in GAME_LANG_NAMES else "en"
+
+def game_lang_name():
+    return GAME_LANG_NAMES.get(game_lang(), game_lang())
+
+def lang_ask_for(code):
+    """Ask the game container to switch. True when the request was written --
+    which is not the same as it having happened, and the caller must not say
+    otherwise."""
+    try:
+        tmp = LANG_REQUEST + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("id=%d-%d\nlang=%s\ntime=%d\n"
+                    % (int(time.time()), os.getpid(), code, int(time.time())))
+        os.replace(tmp, LANG_REQUEST)
+        return True
+    except OSError:
+        return False
+
 def gm_ask_for_reload():
     """Ask the game container to re-read the GM list. True when the request was
     written -- which is not the same as it having happened yet, and the caller
@@ -1174,6 +1240,49 @@ T = {
  "speed":        {"en":"🏃 Running speed","de":"🏃 Laufgeschwindigkeit","tr":"🏃 Koşma hızı"},
  "apply":        {"en":"🏃 Apply","de":"🏃 Anwenden","tr":"🏃 Uygula"},
  "srch_more":    {"en":"⌄ Show more","de":"⌄ Mehr anzeigen","tr":"⌄ Daha fazla göster"},
+ # --- the language the game speaks (not the language of this page) ---
+ "lang_title":   {"en":"🌍 Game language","de":"🌍 Spielsprache","tr":"🌍 Oyun dili"},
+ "lang_now":     {"en":"The game is in {lang}.","de":"Das Spiel läuft auf {lang}.","tr":"Oyun {lang} dilinde."},
+ "lang_intro":   {"en":"This is the language the server speaks: quest text, system messages, and the names of items and monsters. It is not the language of this page — that is the switcher at the top right. Changing it restarts the game for well under a minute, so anyone playing is briefly disconnected.",
+                  "de":"Das ist die Sprache, die der Server spricht: Questtexte, Systemmeldungen und die Namen von Gegenständen und Monstern. Es ist nicht die Sprache dieser Seite — die stellst du oben rechts um. Beim Wechsel startet das Spiel für deutlich unter einer Minute neu, Spieler fliegen also kurz raus.",
+                  "tr":"Bu, sunucunun konuştuğu dildir: görev metinleri, sistem mesajları ve eşya ile canavar adları. Bu sayfanın dili değildir — onu sağ üstten değiştirirsin. Değiştirmek oyunu bir dakikadan çok kısa süre yeniden başlatır, oyuncular kısa süre düşer."},
+ "lang_apply":   {"en":"🌍 Change the game language","de":"🌍 Spielsprache ändern","tr":"🌍 Oyun dilini değiştir"},
+ "lang_asked":   {"en":"Switching the game to {lang}. The server restarts itself in a moment; reload this page to see it done.",
+                  "de":"Das Spiel wird auf {lang} umgestellt. Der Server startet gleich neu; lade diese Seite neu, um es bestätigt zu sehen.",
+                  "tr":"Oyun {lang} diline geçiriliyor. Sunucu birazdan yeniden başlıyor; tamamlandığını görmek için bu sayfayı yenile."},
+ "lang_same":    {"en":"The game is already in {lang}, so nothing was changed.",
+                  "de":"Das Spiel läuft bereits auf {lang}, es wurde nichts geändert.",
+                  "tr":"Oyun zaten {lang} dilinde, hiçbir şey değiştirilmedi."},
+ "lang_nospool": {"en":"The game server could not be reached, so the language was not changed.",
+                  "de":"Der Spielserver war nicht erreichbar, die Sprache wurde nicht geändert.",
+                  "tr":"Oyun sunucusuna ulaşılamadı, dil değiştirilmedi."},
+ "lang_busy":    {"en":"The language is being changed. The game restarts as part of it.",
+                  "de":"Die Sprache wird gerade umgestellt. Das Spiel startet dabei neu.",
+                  "tr":"Dil değiştiriliyor. Oyun bu sırada yeniden başlıyor."},
+ "lang_failed":  {"en":"The language could not be changed, so it is unchanged.",
+                  "de":"Die Sprache konnte nicht geändert werden, sie bleibt also unverändert.",
+                  "tr":"Dil değiştirilemedi, bu yüzden değişmedi."},
+ "lang_unsup":   {"en":"These server files do not carry that language in full, so nothing was changed.",
+                  "de":"Diese Serverdateien enthalten diese Sprache nicht vollständig, es wurde nichts geändert.",
+                  "tr":"Bu sunucu dosyaları o dili eksiksiz içermiyor, hiçbir şey değiştirilmedi."},
+ # --- what a player has to do to their own copy of the game ---
+ "lang_cl_t":    {"en":"Players who already downloaded the game","de":"Spieler, die das Spiel schon heruntergeladen haben","tr":"Oyunu zaten indirmiş oyuncular"},
+ "lang_cl":      {"en":"The download on this page is built to match, so anybody who gets the game from now on is already in {lang}. Somebody who downloaded it earlier changes their own copy in two steps, in the folder the game is in:",
+                  "de":"Der Download auf dieser Seite wird passend gebaut — wer das Spiel ab jetzt holt, hat bereits {lang}. Wer es früher heruntergeladen hat, stellt seine eigene Kopie in zwei Schritten um, im Ordner des Spiels:",
+                  "tr":"Bu sayfadaki indirme buna uygun hazırlanır; oyunu bundan sonra alan herkes zaten {lang} dilinde olur. Daha önce indirmiş olan kendi kopyasını, oyunun bulunduğu klasörde iki adımda değiştirir:"},
+ "lang_cl_1":    {"en":"Rename locale.cfg to locale_old.cfg","de":"locale.cfg in locale_old.cfg umbenennen","tr":"locale.cfg dosyasını locale_old.cfg olarak yeniden adlandır"},
+ "lang_cl_2":    {"en":"Rename {file} to locale.cfg","de":"{file} in locale.cfg umbenennen","tr":"{file} dosyasını locale.cfg olarak yeniden adlandır"},
+ "lang_cl_3":    {"en":"Every language is already in the folder, so nothing has to be downloaded again. The game has to be closed while you do it.",
+                  "de":"Alle Sprachen liegen bereits im Ordner, es muss also nichts erneut heruntergeladen werden. Das Spiel muss dabei geschlossen sein.",
+                  "tr":"Bütün diller zaten klasörde, bu yüzden hiçbir şeyi yeniden indirmek gerekmez. Bunu yaparken oyun kapalı olmalı."},
+ "dl_lang":      {"en":"The game is in {lang}.","de":"Das Spiel ist auf {lang}.","tr":"Oyun {lang} dilinde."},
+ # Deliberately NOT "tip_lang": that one belongs to the switcher at the top of
+ # the page, which changes this panel and nothing else. Two settings with almost
+ # the same name is exactly how somebody ends up restarting a server they only
+ # meant to read in German.
+ "tip_gamelang": {"en":"Changes the language the server speaks — quest text, system messages, item and monster names. The game restarts briefly.",
+                  "de":"Ändert die Sprache, die der Server spricht — Questtexte, Systemmeldungen, Item- und Monsternamen. Das Spiel startet dabei kurz neu.",
+                  "tr":"Sunucunun konuştuğu dili değiştirir — görev metinleri, sistem mesajları, eşya ve canavar adları. Oyun kısa süre yeniden başlar."},
  "gm_title":     {"en":"🛡️ Game master","de":"🛡️ Spielleiter","tr":"🛡️ Oyun yöneticisi"},
  "gm_apply":     {"en":"🛡️ Set rank","de":"🛡️ Rang setzen","tr":"🛡️ Rütbeyi ayarla"},
  "gm_none":      {"en":"Normal player (no rank)","de":"Normaler Spieler (kein Rang)","tr":"Normal oyuncu (rütbe yok)"},
@@ -1534,7 +1643,6 @@ T = {
                   "de":"Dieser Build enthält keine Versionsdatei, also kann das Panel nicht sagen, welche Version es ist — und rät nicht. Solange bleibt die Update-Prüfung ohne Wirkung.",
                   "tr":"Bu yapıda sürüm dosyası yok, bu yüzden panel hangi sürüm olduğunu söyleyemez — ve tahmin etmez. O zamana kadar güncelleme kontrolü sonuç vermez."},
  "pl_nav":       {"en":"Patch log","de":"Änderungsprotokoll","tr":"Sürüm notları"},
- "pl_open":      {"en":"📜 Open the patch log","de":"📜 Änderungsprotokoll öffnen","tr":"📜 Sürüm notlarını aç"},
  "pl_dash_hint": {"en":"What changed in this build, and what a newer one would change.",
                   "de":"Was sich in diesem Build geändert hat — und was ein neuerer ändern würde.",
                   "tr":"Bu yapıda neler değişti ve daha yenisi neleri değiştirir."},
@@ -1727,6 +1835,13 @@ def inject_i18n():
             "local_only": bool(CONF.get("local_only", False)),
             "has_accounts": accounts_exist(),
             "pp_min": PASSPHRASE_MIN,
+            # The language the GAME is in -- see the note above GAME_LANGS. The
+            # front page uses it too, next to the download button, so it goes in
+            # the shared context rather than into one route.
+            "game_langs": GAME_LANGS,
+            "game_lang": game_lang(),
+            "game_lang_name": game_lang_name(),
+            "lang_state": (lang_status().get("state") or ""),
             # The version, and whether a newer one is known. Both are read out
             # of memory -- update_state() never touches the network, so this
             # costs a public page render nothing at all. The notice itself is
@@ -2315,6 +2430,10 @@ setInterval(function(){
 <a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
    title="{{t('tip_download')}}"
    {% if client_url %}rel="noopener noreferrer"{% endif %}>{% if client_name %}📥 {{client_name}}{% else %}{{t('download')}}{% endif %}{% if dlsize %} <span style="font-weight:400;font-size:13px">({{dlsize}})</span>{% endif %}</a>
+{# Which language the game itself is in. Worth a line of its own on the page a
+   player arrives at: it is the one thing about this server they cannot see
+   until they have downloaded a gigabyte and started it. #}
+<p class="muted" style="font-size:13px;margin:6px 0 0">🌍 {{t('dl_lang').format(lang=game_lang_name)}}</p>
 <ol class="steps">
 <li>{{t('dl_st1')}}{% if dlsize %} ({{dlsize}}){% endif %}</li>
 <li>{{t('dl_st2')}}</li>
@@ -2444,6 +2563,7 @@ TPL_REG_DONE = BASE.replace("__BODY__", """
 {% elif client_ready or client_url %}
 <a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
    title="{{t('tip_download')}}" {% if client_url %}rel="noopener noreferrer"{% endif %}>{{t('download')}}</a>
+<p class="muted" style="font-size:13px;margin:6px 0 0">🌍 {{t('dl_lang').format(lang=game_lang_name)}}</p>
 {% endif %}
 <p style="margin-top:10px"><a href="{{url_for('login')}}">← {{brand}}</a></p></div>""")
 
@@ -2514,6 +2634,35 @@ TPL_DASH = BASE.replace("__BODY__", """
  show.addEventListener('click',function(e){ e.preventDefault(); try{localStorage.removeItem(KEY);}catch(e){} apply(false); });
 })();
 </script>
+
+<div class="card"><h3 class="help" title="{{t('tip_gamelang')}}">{{t('lang_title')}}</h3>
+<p><b>{{t('lang_now').format(lang=game_lang_name)}}</b></p>
+<p class="muted">{{t('lang_intro')}}</p>
+{% if lang_state == 'running' %}<p class="muted">⏳ {{t('lang_busy')}}</p>
+{% elif lang_state == 'failed' %}<p class="muted">⚠️ {{t('lang_failed')}}</p>
+{% elif lang_state == 'unsupported' %}<p class="muted">⚠️ {{t('lang_unsup')}}</p>{% endif %}
+<form method="post" action="{{url_for('set_language')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+<select name="lang" title="{{t('tip_gamelang')}}">
+{% for code, name in game_langs %}<option value="{{code}}"{% if code == game_lang %} selected{% endif %}>{{name}}</option>{% endfor %}
+</select>
+<button class="big" title="{{t('tip_gamelang')}}">{{t('lang_apply')}}</button></form>
+
+{# The other half of a language change, and the half the panel cannot do: the
+   client's menus and item names come from a pack chosen by a file sitting next
+   to the .exe. Every language is already in that folder, so it is a rename and
+   not a download -- but nobody guesses that, so it is spelled out. Shown only
+   when it is actually needed, i.e. when the game is not in English. #}
+{% if game_lang != 'en' %}
+<h3 style="margin-top:18px">{{t('lang_cl_t')}}</h3>
+<p class="muted">{{t('lang_cl').format(lang=game_lang_name)}}</p>
+<ol class="muted" style="margin:6px 0 0 18px">
+<li>{{t('lang_cl_1')}}</li>
+<li>{{t('lang_cl_2').format(file='locale_' + game_lang + '.cfg')}}</li>
+</ol>
+<p class="muted">{{t('lang_cl_3')}}</p>
+{% endif %}
+</div>
 
 {# Its own card rather than a paragraph inside the introduction above: that one
    can be hidden for good with one click, and a way back into your own panel
@@ -3641,6 +3790,40 @@ def action():
     except Exception:
         flash(t("act_unexpected"), "error")
     return redirect(url_for("player", pid=pid))
+
+@app.route("/language", methods=["POST"])
+@login_required
+def set_language():
+    """Change the language the game speaks.
+
+    The panel only asks. m2-lang in the game container puts the four files in
+    place and the supervisor restarts the cores, because they read those files
+    while they boot and never again -- so this disconnects anyone playing for
+    the same half minute a rate change does.
+
+    The client is the other half and this does not touch it: its menus and item
+    names come from a pack chosen by the locale.cfg next to the .exe. New
+    downloads are built to match; anyone who already has the game renames one
+    file, which is what the page says after a switch.
+    """
+    code = (request.form.get("lang", "") or "").strip().lower()
+    if code not in GAME_LANG_NAMES:
+        flash(t("act_novalue"), "error")
+        return redirect(url_for("dash"))
+
+    if code == game_lang():
+        flash(t("lang_same").format(lang=GAME_LANG_NAMES[code]))
+        return redirect(url_for("dash"))
+
+    if not lang_ask_for(code):
+        flash(t("lang_nospool"), "error")
+        return redirect(url_for("dash"))
+
+    # Said here rather than after the fact: the game container picks the request
+    # up within five seconds and then restarts the cores, so by the time this
+    # page comes back the switch is under way but not finished.
+    flash(t("lang_asked").format(lang=GAME_LANG_NAMES[code]))
+    return redirect(url_for("dash"))
 
 @app.route("/passphrase", methods=["POST"])
 @login_required
