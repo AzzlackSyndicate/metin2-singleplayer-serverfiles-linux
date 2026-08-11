@@ -1111,6 +1111,20 @@ somewhere shorter -- C:\Metin2Server, say:
     iex "& { `$(irm https://raw.githubusercontent.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/main/installer/install.ps1) } -InstallDir C:\Metin2Server"
 "@
         }
+        # Two files the browser client's fetcher needs live OUTSIDE
+        # linux-port/docker -- fetch-web-client.sh one level up, artifacts.json
+        # at the top of the repository -- while the install directory is a copy
+        # of the docker folder alone. Mounting them with ../ from the compose
+        # file therefore pointed at nothing on a real install, and Docker answers
+        # a missing bind source by creating an empty DIRECTORY, so the fetcher
+        # started with a directory where its script should have been. Copied in
+        # so every path in docker-compose.yml stays inside this one folder.
+        foreach ($extra in @('linux-port/fetch-web-client.sh', 'artifacts.json')) {
+            $rc = Invoke-DockerLoud @('cp', "$($cid):/work/repo/$extra", $script:InstallDir)
+            if ($rc -ne 0) {
+                Write-Warn "Could not copy $extra -- the browser client cannot be fetched."
+            }
+        }
     } finally {
         Invoke-Native 'docker' @('rm', '-f', $cid) | Out-Null
     }

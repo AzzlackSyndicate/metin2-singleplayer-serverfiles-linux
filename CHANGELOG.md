@@ -50,6 +50,12 @@ every version here.
   checked, and only then is `current` moved — a rename, which either happens or
   does not. There is no instant at which a player is handed half an engine, and
   a rollback is one symlink.
+- The fetcher's script and `artifacts.json` are copied into the install
+  directory. They live one and two levels above `linux-port/docker` in a
+  checkout, and an install directory is a copy of that folder alone -- so
+  mounting them with `../` found nothing on a real server. Docker answers a
+  missing bind source by creating an empty directory, so the fetcher started
+  with a directory where its script should have been and did nothing, silently.
 - **A WebSocket bridge**, so a browser can reach a game server that speaks TCP.
   It is the `wsbridge` service, it is in a compose profile, and
   `docker compose up -d` does not start it or build it.

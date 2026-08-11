@@ -1136,6 +1136,21 @@ fetch_stack() {
     say "Copying the build context into $INSTALL_DIR ..."
     mkdir -p "$INSTALL_DIR"
     (cd "$_ctx" && tar cf - .) | (cd "$INSTALL_DIR" && tar xf -)
+
+    # Two files the browser client's fetcher needs live OUTSIDE linux-port/docker
+    # -- fetch-web-client.sh one level up, artifacts.json at the top of the
+    # repository -- and the install directory is a copy of the docker folder
+    # alone. Mounting them from the compose file with ../ therefore pointed at
+    # nothing on a real install, and the fetcher started with empty directories
+    # where its script and its pointer file should have been. They are copied in
+    # so every path in docker-compose.yml stays inside this one directory.
+    for _extra in "$REPO_DIR/linux-port/fetch-web-client.sh" "$REPO_DIR/artifacts.json"; do
+        if [ -f "$_extra" ]; then
+            cp "$_extra" "$INSTALL_DIR/" 2>/dev/null || \
+                warn "Could not copy $(basename "$_extra") -- the browser client cannot be fetched."
+        fi
+    done
+
     good "Server files in place."
 }
 

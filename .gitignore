@@ -180,3 +180,10 @@ desktop.ini
 # git-for-Windows cannot match a path containing a colon at all, so on Windows
 # the only defence is noticing it. `git status` is where you will see it.
 C:/
+
+# Copies the installer places beside docker-compose.yml on a real install.
+# In a checkout these two live one and two levels up; compose can only mount
+# from beside itself, so testing the fetcher from a checkout means copying them
+# here first. Ignored so that copy never becomes a second source of truth.
+linux-port/docker/fetch-web-client.sh
+linux-port/docker/artifacts.json

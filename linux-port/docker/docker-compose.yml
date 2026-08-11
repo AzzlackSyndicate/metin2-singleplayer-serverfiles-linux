@@ -488,8 +488,13 @@ services:
 
     volumes:
       - panel-data:/out
-      - ../fetch-web-client.sh:/opt/fetch-web-client.sh:ro
-      - ../../artifacts.json:/opt/artifacts.json:ro
+      # Beside this file, not above it. An install directory is a copy of this
+      # folder alone -- ../ and ../../ exist in a git checkout and point at
+      # nothing on a real server, and Docker answers a missing bind source by
+      # creating an empty DIRECTORY, so the fetcher would start with a directory
+      # where its script should be. The installer copies both files in.
+      - ./fetch-web-client.sh:/opt/fetch-web-client.sh:ro
+      - ./artifacts.json:/opt/artifacts.json:ro
       # Downloads survive a failed run, so a cut connection resumes instead of
       # starting the 1.75 GB again. Shared with client-builder on purpose --
       # both are "large archives fetched once".
