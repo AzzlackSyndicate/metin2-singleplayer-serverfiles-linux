@@ -1272,6 +1272,10 @@ T = {
                   "de":"Die Item-Liste konnte nicht geladen werden. Lade die Seite neu; wenn es weiter passiert, blockiert dein Browser die Anfrage womöglich.",
                   "tr":"Eşya listesi yüklenemedi. Sayfayı yenile; devam ederse tarayıcın isteği engelliyor olabilir."},
  # --- the language the game speaks (not the language of this page) ---
+ "sect_setup":   {"en":"Server setup","de":"Servereinrichtung","tr":"Sunucu kurulumu"},
+ "sect_setup_hint":{"en":"How this server is set up, rather than what happens on it. You will not need these often, and both of them affect everyone.",
+                  "de":"Wie dieser Server eingerichtet ist — nicht, was auf ihm passiert. Beides brauchst du selten, und beides betrifft alle.",
+                  "tr":"Bu sunucunun nasıl kurulduğu — üzerinde ne olduğu değil. İkisine de nadiren ihtiyacın olur ve ikisi de herkesi etkiler."},
  "lang_title":   {"en":"🌍 Game language","de":"🌍 Spielsprache","tr":"🌍 Oyun dili"},
  "lang_now":     {"en":"The game is in {lang}.","de":"Das Spiel läuft auf {lang}.","tr":"Oyun {lang} dilinde."},
  "lang_intro":   {"en":"This is the language the server speaks: quest text, system messages, and the names of items and monsters. It is not the language of this page — that is the switcher at the top right. Changing it restarts the game for well under a minute, so anyone playing is briefly disconnected.",
@@ -2278,6 +2282,14 @@ animation:rise .5s cubic-bezier(.22,.7,.35,1) both;transition:border-color .25s}
 .wrap>.card:nth-of-type(5){animation-delay:.24s}
 .card:hover{border-color:#4a3d24}
 .card h3{margin:0 0 10px;font-size:17px}
+/* A heading that stands between groups of cards rather than inside one, so the
+   settings that belong to the installation are visibly not the ones you use
+   while running the server. Full-width rule above it: on a narrow screen the
+   cards are the only structure there is, and without the line a heading just
+   looks like a card that lost its box. */
+.sect{margin:34px 0 12px;padding-top:20px;border-top:1px solid var(--line);
+font-size:15px;letter-spacing:.4px;text-transform:uppercase;color:var(--gold)}
+.sect+.sect-hint{margin:-6px 0 14px;font-size:13px}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 table{border-collapse:collapse;width:100%}
 th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
@@ -2672,47 +2684,6 @@ TPL_DASH = BASE.replace("__BODY__", """
 })();
 </script>
 
-<div class="card"><h3 class="help" title="{{t('tip_gamelang')}}">{{t('lang_title')}}</h3>
-<p><b>{{t('lang_now').format(lang=game_lang_name)}}</b></p>
-<p class="muted">{{t('lang_intro')}}</p>
-{% if lang_state == 'running' %}<p class="muted">⏳ {{t('lang_busy')}}</p>
-{% elif lang_state == 'failed' %}<p class="muted">⚠️ {{t('lang_failed')}}</p>
-{% elif lang_state == 'unsupported' %}<p class="muted">⚠️ {{t('lang_unsup')}}</p>{% endif %}
-<form method="post" action="{{url_for('set_language')}}">
-<input type="hidden" name="_csrf" value="{{csrf_token}}">
-<select name="lang" title="{{t('tip_gamelang')}}">
-{% for code, name in game_langs %}<option value="{{code}}"{% if code == game_lang %} selected{% endif %}>{{name}}</option>{% endfor %}
-</select>
-<button class="big" title="{{t('tip_gamelang')}}">{{t('lang_apply')}}</button></form>
-
-{# The other half of a language change, and the half the panel cannot do: the
-   client's menus and item names come from a pack chosen by a file sitting next
-   to the .exe. Every language is already in that folder, so it is a rename and
-   not a download -- but nobody guesses that, so it is spelled out. Shown only
-   when it is actually needed, i.e. when the game is not in English. #}
-{% if game_lang != 'en' %}
-<h3 style="margin-top:18px">{{t('lang_cl_t')}}</h3>
-<p class="muted">{{t('lang_cl').format(lang=game_lang_name)}}</p>
-<ol class="muted" style="margin:6px 0 0 18px">
-<li>{{t('lang_cl_1')}}</li>
-<li>{{t('lang_cl_2').format(file='locale_' + game_lang + '.cfg')}}</li>
-</ol>
-<p class="muted">{{t('lang_cl_3')}}</p>
-{% endif %}
-</div>
-
-{# Its own card rather than a paragraph inside the introduction above: that one
-   can be hidden for good with one click, and a way back into your own panel
-   should not disappear with it. #}
-<div class="card"><h3 class="help" title="{{t('tip_pp')}}">{{t('pp_title')}}</h3>
-{% if local_only %}<p class="muted">{{t('pp_local')}}</p>{% endif %}
-<form method="post" action="{{url_for('set_passphrase')}}">
-<input type="hidden" name="_csrf" value="{{csrf_token}}">
-{% if not local_only %}<input type="password" name="old" placeholder="{{t('pp_old')}}" title="{{t('tip_pp')}}">{% endif %}
-<input type="password" name="new" placeholder="{{t('pp_new').format(n=pp_min)}}" title="{{t('tip_pp')}}">
-<input type="password" name="new2" placeholder="{{t('pp_new2')}}" title="{{t('tip_pp')}}">
-<button class="big" title="{{t('tip_pp')}}">{{t('pp_save')}}</button></form></div>
-
 {# Always here, so the changelog is one click away rather than a grey line at
    the bottom of the page. It lights up by itself when there is something to
    fetch. Only on the admin side -- the front page belongs to the players. #}
@@ -2765,7 +2736,57 @@ TPL_DASH = BASE.replace("__BODY__", """
    rows.forEach(function(r){ r.style.display = r.getAttribute('data-k').indexOf(q)>=0 ? '' : 'none'; });
  });
 })();
-</script>""")
+</script>
+
+{# Everything above is the server as you run it day to day: what is published,
+   how fast it plays, who is on it. What follows is the installation itself --
+   set once, rarely touched, and disruptive when it is. Keeping the two apart
+   is why a language switch that restarts the game does not sit next to the
+   list of characters you click through every day. #}
+<h2 class="sect">🛠️ {{t('sect_setup')}}</h2>
+<p class="muted sect-hint">{{t('sect_setup_hint')}}</p>
+
+<div class="card"><h3 class="help" title="{{t('tip_gamelang')}}">{{t('lang_title')}}</h3>
+<p><b>{{t('lang_now').format(lang=game_lang_name)}}</b></p>
+<p class="muted">{{t('lang_intro')}}</p>
+{% if lang_state == 'running' %}<p class="muted">⏳ {{t('lang_busy')}}</p>
+{% elif lang_state == 'failed' %}<p class="muted">⚠️ {{t('lang_failed')}}</p>
+{% elif lang_state == 'unsupported' %}<p class="muted">⚠️ {{t('lang_unsup')}}</p>{% endif %}
+<form method="post" action="{{url_for('set_language')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+<select name="lang" title="{{t('tip_gamelang')}}">
+{% for code, name in game_langs %}<option value="{{code}}"{% if code == game_lang %} selected{% endif %}>{{name}}</option>{% endfor %}
+</select>
+<button class="big" title="{{t('tip_gamelang')}}">{{t('lang_apply')}}</button></form>
+
+{# The other half of a language change, and the half the panel cannot do: the
+   client's menus and item names come from a pack chosen by a file sitting next
+   to the .exe. Every language is already in that folder, so it is a rename and
+   not a download -- but nobody guesses that, so it is spelled out. Shown only
+   when it is actually needed, i.e. when the game is not in English. #}
+{% if game_lang != 'en' %}
+<h3 style="margin-top:18px">{{t('lang_cl_t')}}</h3>
+<p class="muted">{{t('lang_cl').format(lang=game_lang_name)}}</p>
+<ol class="muted" style="margin:6px 0 0 18px">
+<li>{{t('lang_cl_1')}}</li>
+<li>{{t('lang_cl_2').format(file='locale_' + game_lang + '.cfg')}}</li>
+</ol>
+<p class="muted">{{t('lang_cl_3')}}</p>
+{% endif %}
+</div>
+
+{# Its own card rather than a paragraph inside the introduction above: that one
+   can be hidden for good with one click, and a way back into your own panel
+   should not disappear with it. #}
+<div class="card"><h3 class="help" title="{{t('tip_pp')}}">{{t('pp_title')}}</h3>
+{% if local_only %}<p class="muted">{{t('pp_local')}}</p>{% endif %}
+<form method="post" action="{{url_for('set_passphrase')}}">
+<input type="hidden" name="_csrf" value="{{csrf_token}}">
+{% if not local_only %}<input type="password" name="old" placeholder="{{t('pp_old')}}" title="{{t('tip_pp')}}">{% endif %}
+<input type="password" name="new" placeholder="{{t('pp_new').format(n=pp_min)}}" title="{{t('tip_pp')}}">
+<input type="password" name="new2" placeholder="{{t('pp_new2')}}" title="{{t('tip_pp')}}">
+<button class="big" title="{{t('tip_pp')}}">{{t('pp_save')}}</button></form></div>
+""")
 
 TPL_PLAYER = BASE.replace("__BODY__", """
 <p><a href="{{url_for('dash')}}">{{t('back_players')}}</a></p>

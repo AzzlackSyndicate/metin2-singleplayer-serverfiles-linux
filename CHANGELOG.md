@@ -38,6 +38,9 @@ every version here.
   goes. Servers installed before this keep the value in their `.env`; change
   `M2_MAX_LEVEL` there and restart to raise it.
 - The "set level" box offers exactly what your server accepts.
+- **Game language** and **Admin passphrase** have moved to the bottom of the
+  admin page, under a heading of their own. They set up the server rather
+  than run it, and both affect everyone on it.
 
 ---
 
