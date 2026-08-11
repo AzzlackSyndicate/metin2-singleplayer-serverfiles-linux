@@ -2729,23 +2729,35 @@ fetch_web_client() {
     # return before the copy, and an install that is already at the published
     # version takes one of them. So make sure here, every run: this is also what
     # repairs a server that updated while the copy was missing.
-    for _need in fetch-web-client.sh artifacts.json; do
-        [ -f "$INSTALL_DIR/$_need" ] && continue
-        _from=""
-        [ -f "$REPO_DIR/linux-port/$_need" ] && _from="$REPO_DIR/linux-port/$_need"
-        [ -f "$REPO_DIR/$_need" ]            && _from="$REPO_DIR/$_need"
-        if [ -z "$_from" ]; then
-            warn "$_need is missing and could not be found in the checkout."
-            warn "The browser client cannot be fetched."
-            WANT_WEB=0
-            return 0
+    # A checkout is not always around when this runs: the path that skips
+    # restaging -- an install already at the published version -- never calls
+    # locate_repo, so REPO_DIR is empty exactly on the servers that update
+    # first. Downloading is therefore not a fallback but the normal case, and
+    # the checkout is preferred only when there is one.
+    _raw="${M2_INSTALLER_URL%/installer/install.sh}"
+    for _need in linux-port/fetch-web-client.sh artifacts.json; do
+        _base=$(basename "$_need")
+        [ -f "$INSTALL_DIR/$_base" ] && continue
+
+        if [ -n "$REPO_DIR" ] && [ -f "$REPO_DIR/$_need" ]; then
+            cp "$REPO_DIR/$_need" "$INSTALL_DIR/$_base" && {
+                info "placed $_base beside docker-compose.yml"
+                continue
+            }
         fi
-        cp "$_from" "$INSTALL_DIR/$_need" || {
-            warn "Could not copy $_need into $INSTALL_DIR."
-            WANT_WEB=0
-            return 0
-        }
-        info "placed $_need beside docker-compose.yml"
+
+        if curl -fsSL --max-time 60 "$_raw/$_need" -o "$INSTALL_DIR/$_base.part" 2>/dev/null &&
+           [ -s "$INSTALL_DIR/$_base.part" ]; then
+            mv "$INSTALL_DIR/$_base.part" "$INSTALL_DIR/$_base"
+            info "placed $_base beside docker-compose.yml"
+            continue
+        fi
+        rm -f "$INSTALL_DIR/$_base.part"
+
+        warn "$_base could not be obtained, from the checkout or from $_raw."
+        warn "The browser client cannot be fetched."
+        WANT_WEB=0
+        return 0
     done
 
     # Its own exit codes say what went wrong, so this can be specific rather than

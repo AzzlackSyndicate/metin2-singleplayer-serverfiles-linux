@@ -61,7 +61,8 @@ every version here.
   directory, so the fetcher started with a directory where its script should
   have been and did nothing, silently.
 - The fetcher's script and pointer file are placed beside `docker-compose.yml`
-  on every run, not only when the build context is restaged. A server already at
+  on every run, downloaded if no checkout is at hand, not only when the build
+  context is restaged. A server already at
   the published version skips restaging, so on those the two files never
   arrived and the browser client could not be fetched.
 - The installer checks that a browser client actually arrived instead of
