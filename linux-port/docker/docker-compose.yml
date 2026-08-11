@@ -117,7 +117,7 @@ services:
       M2_BIND_IP: "${M2_BIND_IP:-0.0.0.0}"
 
       M2_CHANNELS: "${M2_CHANNELS:-1}"
-      M2_MAX_LEVEL: "${M2_MAX_LEVEL:-105}"
+      M2_MAX_LEVEL: "${M2_MAX_LEVEL:-120}"
       M2_TEST_SERVER: "${M2_TEST_SERVER:-0}"
       M2_MALL_URL: "${M2_MALL_URL:-}"
       M2_LOG_KEEP_DAYS: "${M2_LOG_KEEP_DAYS:-3}"
@@ -209,6 +209,13 @@ services:
       # player.item.count is TINYINT UNSIGNED. Without this the panel allows
       # 65535 and MySQL truncates in silence -- 1000 potions become 255.
       M2_MAX_ITEM_COUNT: "${M2_MAX_ITEM_COUNT:-255}"
+      # The same MAX_LEVEL the game core is given, so the panel offers what the
+      # server will actually accept. It matters because the server does not say
+      # no: a level above gPlayerMaxLevel makes PointChange return without a
+      # word, and everything upstream reports success. Passed as M2PANEL_* on
+      # purpose -- the panel reads the environment before its config file, so
+      # this reaches an install whose m2panel.conf was written long ago.
+      M2PANEL_MAX_LEVEL: "${M2_MAX_LEVEL:-120}"
       # 1 when this server is reachable only from the machine it runs on -- the
       # Windows installer sets it, and so does install.sh --local. The panel
       # then tells the operator that nobody else can join, instead of telling

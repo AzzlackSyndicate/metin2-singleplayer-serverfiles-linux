@@ -497,7 +497,7 @@ PASSPHRASE_MIN = 8
 # unless it is set, so an existing installation behaves exactly as before.
 ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash",
             "bind", "port", "brand", "client_url", "client_name",
-            "inventory_slots", "max_item_count", "status_ports", "local_only",
+            "inventory_slots", "max_item_count", "max_level", "status_ports", "local_only",
             "contact_email", "update_check", "update_apply", "update_command")
 
 # The settings that are a yes or a no. Written out rather than guessed from the
@@ -512,7 +512,7 @@ def _conf_from_env():
         raw = os.environ.get("M2PANEL_" + key.upper(), "").strip()
         if not raw:
             continue
-        if key in ("port", "inventory_slots", "max_item_count"):
+        if key in ("port", "inventory_slots", "max_item_count", "max_level"):
             try:
                 out[key] = int(raw)
             except ValueError:
@@ -599,6 +599,31 @@ except (TypeError, ValueError):
     MAX_ITEM_COUNT = 65535
 if not (1 <= MAX_ITEM_COUNT <= 65535):
     MAX_ITEM_COUNT = 65535
+
+# The highest level this server will accept, which is MAX_LEVEL in the game's
+# CONFIG (gPlayerMaxLevel) and nothing to do with what the engine could do --
+# that ceiling is 120, PLAYER_MAX_LEVEL_CONST in common/length.h.
+#
+# It has to be known here because the server does not argue about it. Setting a
+# level goes through PointChange(POINT_LEVEL, ...), and in char.cpp that reads
+#
+#     if ((GetLevel() + amount) > gPlayerMaxLevel)
+#         return;
+#
+# -- a silent return. The quest reports success, the panel repeats it, and the
+# character stays where it was. Worse, pc_set_level hands out skill, sub-skill
+# and stat points BEFORE it changes the level, so an out-of-range attempt keeps
+# the points and loses the level. So the panel refuses these itself rather than
+# offering a number the server will quietly drop on the floor.
+#
+# The default matches the stack's own M2_MAX_LEVEL default; the compose file
+# feeds both from the same value, so raising one raises the other.
+try:
+    MAX_LEVEL = int(CONF.get("max_level", 120))
+except (TypeError, ValueError):
+    MAX_LEVEL = 120
+if not (1 <= MAX_LEVEL <= 120):
+    MAX_LEVEL = 120
 
 # ---- what the game download is called -------------------------------------
 # The installer writes "client_name" into the config from the chosen server-files
@@ -1233,13 +1258,19 @@ T = {
  "amount":       {"en":"Amount (negative takes yang away)","de":"Menge (negativ = abziehen)","tr":"Miktar (eksi = al)"},
  "send_gold":    {"en":"💰 Send yang","de":"💰 Yang senden","tr":"💰 Yang gönder"},
  "set_level":    {"en":"⭐ Set level","de":"⭐ Level setzen","tr":"⭐ Seviye ayarla"},
- "new_level":    {"en":"New level (1-120)","de":"Neues Level (1-120)","tr":"Yeni seviye (1-120)"},
+ "new_level":    {"en":"New level (1-{max})","de":"Neues Level (1-{max})","tr":"Yeni seviye (1-{max})"},
+ "level_range":  {"en":"This server's highest level is {max}, so nothing was changed. Raise M2_MAX_LEVEL in .env and restart to go higher — the game itself stops at 120.",
+                  "de":"Das höchste Level dieses Servers ist {max}, es wurde nichts geändert. Für mehr M2_MAX_LEVEL in der .env erhöhen und neu starten — das Spiel selbst endet bei 120.",
+                  "tr":"Bu sunucunun en yüksek seviyesi {max}, bu yüzden hiçbir şey değiştirilmedi. Daha yükseği için .env dosyasındaki M2_MAX_LEVEL değerini artırıp yeniden başlat — oyunun kendisi 120'de biter."},
  "change_level": {"en":"⭐ Change level","de":"⭐ Level ändern","tr":"⭐ Seviyeyi değiştir"},
  "teleport":     {"en":"🗺️ Teleport","de":"🗺️ Teleportieren","tr":"🗺️ Işınla"},
  "ingame_only":  {"en":"(works while the player is in game)","de":"(nur wenn der Spieler online ist)","tr":"(oyuncu oyundayken çalışır)"},
  "speed":        {"en":"🏃 Running speed","de":"🏃 Laufgeschwindigkeit","tr":"🏃 Koşma hızı"},
  "apply":        {"en":"🏃 Apply","de":"🏃 Anwenden","tr":"🏃 Uygula"},
  "srch_more":    {"en":"⌄ Show more","de":"⌄ Mehr anzeigen","tr":"⌄ Daha fazla göster"},
+ "srch_down":    {"en":"The item list could not be loaded. Reload the page; if it keeps happening, your browser may be blocking the request.",
+                  "de":"Die Item-Liste konnte nicht geladen werden. Lade die Seite neu; wenn es weiter passiert, blockiert dein Browser die Anfrage womöglich.",
+                  "tr":"Eşya listesi yüklenemedi. Sayfayı yenile; devam ederse tarayıcın isteği engelliyor olabilir."},
  # --- the language the game speaks (not the language of this page) ---
  "lang_title":   {"en":"🌍 Game language","de":"🌍 Spielsprache","tr":"🌍 Oyun dili"},
  "lang_now":     {"en":"The game is in {lang}.","de":"Das Spiel läuft auf {lang}.","tr":"Oyun {lang} dilinde."},
@@ -1835,6 +1866,7 @@ def inject_i18n():
             "local_only": bool(CONF.get("local_only", False)),
             "has_accounts": accounts_exist(),
             "pp_min": PASSPHRASE_MIN,
+            "max_level": MAX_LEVEL,
             # The language the GAME is in -- see the note above GAME_LANGS. The
             # front page uses it too, next to the download button, so it goes in
             # the shared context rather than into one route.
@@ -2071,7 +2103,12 @@ def api_items():
     nothing either way -- there is no fuzzy matching here, and pretending
     otherwise in a comment would be worse than the gap.
     """
-    if not session.get("auth"):
+    # `or local_open()' is not decoration: every other admin route in this file
+    # goes through login_required, which lets a local install through without a
+    # session because there is no passphrase to type there. This one checked the
+    # session alone, so on a local server the search answered every query with
+    # an empty list -- you typed, and the box below simply never appeared.
+    if not (session.get("auth") or local_open()):
         return jsonify({"items": [], "more": False})
     q = request.args.get("q", "").strip().lower()
     cat = request.args.get("cat", "all")
@@ -2761,7 +2798,15 @@ TPL_PLAYER = BASE.replace("__BODY__", """
  function load(n){
    shown=n||40;
    var q=encodeURIComponent(s.value),cat=c.value;
-   fetch('/api/items?q='+q+'&cat='+cat+'&limit='+shown).then(x=>x.json()).then(res=>{
+   /* credentials: the session cookie has to go with this or the server answers
+      an empty list and the box stays blank. Modern browsers send it on a
+      same-origin fetch by default -- but that default was 'omit' until 2017,
+      and some browsers still drop cookies on background requests under their
+      privacy settings. Saying it costs nothing and removes a whole class of
+      "it works here but not there". */
+   fetch('/api/items?q='+q+'&cat='+cat+'&limit='+shown,{credentials:'same-origin'})
+    .then(function(x){ if(!x.ok) throw new Error(x.status); return x.json(); })
+    .then(function(res){
      r.innerHTML='';
      res.items.forEach(function(it){
        var b=document.createElement('div');
@@ -2779,7 +2824,18 @@ TPL_PLAYER = BASE.replace("__BODY__", """
        m.onclick=function(){load(shown+120);};
        r.appendChild(m);
      }
-   });
+   })
+    /* Without this a failed request left the box empty and silent, which is
+       indistinguishable from "no such item" and sends people looking in the
+       wrong place. Now it says so on the page instead of only in a console
+       nobody has open. */
+    .catch(function(){
+      r.innerHTML='';
+      var e=document.createElement('div');
+      e.style.cssText='padding:8px 10px;opacity:.75';
+      e.textContent={{t('srch_down')|tojson}};
+      r.appendChild(e);
+    });
  }
  s.addEventListener('input',function(){clearTimeout(tmr);tmr=setTimeout(function(){load(40);},200);});
  c.addEventListener('change',function(){load(40);});
@@ -2804,7 +2860,7 @@ TPL_PLAYER = BASE.replace("__BODY__", """
 <form method="post" action="{{url_for('action')}}">
 <input type="hidden" name="_csrf" value="{{csrf_token}}">
 <input type="hidden" name="pid" value="{{p.id}}"><input type="hidden" name="cmd" value="LEVEL">
-<input name="arg1" type="number" min="1" max="120" placeholder="{{t('new_level')}}" title="{{t('tip_level')}}" required>
+<input name="arg1" type="number" min="1" max="{{max_level}}" placeholder="{{t('new_level').format(max=max_level)}}" title="{{t('tip_level')}}" required>
 <button class="big" title="{{t('tip_level')}}">{{t('change_level')}}</button></form></div>
 
 <div class="card"><h3 class="help" title="{{t('tip_teleport')}}">{{t('teleport')}} <span class="muted">{{t('ingame_only')}}</span></h3>
@@ -3732,6 +3788,18 @@ def action():
         arg1, arg2 = preset.split(" ", 1)
     elif cmd == "SPEED":
         arg2 = "3600"
+    elif cmd == "LEVEL":
+        # Checked here rather than left to the server, which does not refuse it
+        # -- it returns from PointChange without a word and reports success all
+        # the way back up. See the note above MAX_LEVEL.
+        try:
+            _lv = int(str(arg1).strip())
+        except (TypeError, ValueError):
+            _lv = None
+        if _lv is None or not (1 <= _lv <= MAX_LEVEL):
+            flash(t("level_range").format(max=MAX_LEVEL), "error")
+            return redirect(url_for("player", pid=pid))
+        arg1 = str(_lv)
 
     if not arg1:
         flash(t("act_novalue"), "error")

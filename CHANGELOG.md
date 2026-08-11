@@ -17,6 +17,30 @@ every version here.
 
 ---
 
+## 1.10.0 — 2026-08-11
+
+### Fixed
+
+- The item search box works on a local install. It answered every query with
+  an empty list there, so typing produced no results at all.
+- The item search works in browsers without arrow-function support. It was the
+  only script in the panel that used them, and a browser that cannot read them
+  skips the whole block — typing then did nothing whatsoever.
+- The item search says so when it cannot reach the server, instead of looking
+  like an empty result.
+- Setting a level above the server's cap now says so. The server silently
+  ignored it and reported success, so the level stayed as it was while the
+  character kept the skill and stat points from the attempt.
+
+### Changed
+
+- The highest character level is 120 by default, which is as high as the game
+  goes. Servers installed before this keep the value in their `.env`; change
+  `M2_MAX_LEVEL` there and restart to raise it.
+- The "set level" box offers exactly what your server accepts.
+
+---
+
 ## 1.9.0 — 2026-08-11
 
 ### Added
