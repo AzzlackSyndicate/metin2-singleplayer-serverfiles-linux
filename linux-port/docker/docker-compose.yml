@@ -11,6 +11,10 @@
 #            container, supervised in the required boot order.
 #    panel   the admin panel, the only public HTTP surface.
 #
+#  And three tools that are in profiles, so `docker compose up -d' does not
+#  start them: client-builder (the download players get), updater (UPDATING.md)
+#  and wsbridge (the WebSocket end of the browser client).
+#
 #  Why the game cores share a container: they are not independent services.
 #  The db core listens on loopback only and every other core dials
 #  127.0.0.1:15000 during boot; each core must run with its CWD set to its own
@@ -227,6 +231,26 @@ services:
       # players at whatever address happened to be in the source.
       M2_CONTACT_EMAIL: "${M2_CONTACT_EMAIL:-}"
 
+      # ---- the client that runs in a browser ------------------------------
+      # Off. With it off the panel offers nothing, serves nothing under /play
+      # and never contacts the bridge, which is what a server without a browser
+      # client wants. Even set to 1 the button appears only once a browser
+      # client has actually been placed on the panel's data volume, because
+      # until then there would be nothing behind it.
+      M2PANEL_BROWSER_PLAY: "${M2_BROWSER_PLAY:-0}"
+      # Where the built browser client is, on the panel's own volume.
+      M2PANEL_BROWSER_DIR: "/usr/local/m2panel/browser"
+      # The bridge's own port on the host, for the case where there is no proxy
+      # in front: the panel then tells the page to dial this machine there.
+      # Behind nginx the page is told the panel's own address and port instead,
+      # because nginx routes /to/ and /ping through -- the client cannot be
+      # given a path, only host:port, so same-origin is the only way it gets a
+      # certificate. See admin_panel.py, bridge_endpoint().
+      M2PANEL_BRIDGE_PORT: "${M2_BRIDGE_PORT:-7789}"
+      # Where the panel itself asks the bridge which ports it will connect to,
+      # over this network. Not what the browser is told -- see above.
+      M2PANEL_BRIDGE_HOST: "wsbridge"
+
       # Server rates. The panel runs M2PANEL_RATES_SCRIPT when somebody saves
       # the rates page and reads M2PANEL_RATES_STATUS back to report how it
       # went -- the same two settings it uses on FreeBSD, pointed at the
@@ -390,6 +414,137 @@ services:
 
     # No network dependency on anything in the stack: it talks to MEGA and to
     # two volumes. It can be run before the server is even up.
+    networks: [backend]
+
+  # ---------------------------------------------------------------------------
+  # The WebSocket-to-TCP bridge, for the client that runs in a browser.
+  #
+  # A browser cannot open a TCP socket, and the game speaks TCP and nothing
+  # else. This is the join: WebSocket in, TCP out, byte for byte. It knows
+  # nothing about the protocol it carries -- the key exchange and the cipher
+  # happen between the browser and the game core exactly as they do for a
+  # native client.
+  #
+  # It is in a profile, so `docker compose up -d' does not start it, does not
+  # build it and does not stop it. A server that offers no browser client never
+  # runs it:
+  #
+  #     docker compose --profile browser up -d wsbridge
+  #
+  # The game ports it dials are reached over this compose network by container
+  # name, so nothing new is published to the internet on the game's account.
+  # The only port this adds to the host is its own, and by default that is on
+  # 127.0.0.1 -- on a server with a domain, nginx reaches it there and gives it
+  # TLS at /ws/, which is what a page served over HTTPS requires.
+  #
+  # ---------------------------------------------------------------------------
+  #  Puts the browser client on the panel's volume. A task, not a service: it
+  #  runs, writes, and exits.
+  #
+  #      docker compose --profile webclient run --rm webclient-fetcher
+  #
+  #  It is a container rather than a host script for the same reason
+  #  client-builder is: /play is served out of the panel-data volume, and writing
+  #  into a named volume is a container's job. Reaching into Docker's own
+  #  directory from the host works right up until the storage driver, a remote
+  #  daemon or a rootless install says otherwise.
+  #
+  #  fetch-web-client.sh and artifacts.json are MOUNTED, not baked in -- editing
+  #  a link or publishing a new engine is then a re-run, never a rebuild.
+  #
+  #  It fetches at most two archives and only what is actually out of date:
+  #  the engine (17.6 MB, a release asset of this repository) and the corpus
+  #  (1.75 GB, on MEGA). Nine of ten fixes touch only the engine, which is the
+  #  entire reason those are two files instead of one.
+  # ---------------------------------------------------------------------------
+  webclient-fetcher:
+    build:
+      context: ./webclient-fetcher
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: "${M2_BASE_IMAGE:-ubuntu:24.04}"
+    image: metin2/webclient-fetcher:latest
+    profiles: ["webclient"]
+    restart: "no"
+    init: true
+
+    environment:
+      # Where the panel looks for /play. Inside this container the volume is at
+      # /out, so this is that path -- not the panel's own /usr/local/m2panel.
+      M2_WEBCLIENT_TARGET: "/out/browser"
+      M2_WEBCLIENT_POINTER: "/opt/artifacts.json"
+
+      # An anonymous MEGA download is charged to the file owner's quota, and when
+      # that runs out the link starts failing for everybody. Signing in bills it
+      # to the operator instead. Same two variables fetch-sources.sh uses, so one
+      # account covers both downloads.
+      M2_SRC_MEGA_USER: "${M2_SRC_MEGA_USER:-}"
+      M2_SRC_MEGA_PASS: "${M2_SRC_MEGA_PASS:-}"
+
+      # Keep or drop the downloaded archives after unpacking. Kept by default:
+      # re-fetching 1.75 GB to recover from a bad unpack is a poor trade.
+      M2_WEBCLIENT_KEEP_ARCHIVE: "${M2_WEBCLIENT_KEEP_ARCHIVE:-1}"
+      M2_WEBCLIENT_FORCE: "${M2_WEBCLIENT_FORCE:-}"
+
+    volumes:
+      - panel-data:/out
+      - ../fetch-web-client.sh:/opt/fetch-web-client.sh:ro
+      - ../../artifacts.json:/opt/artifacts.json:ro
+      # Downloads survive a failed run, so a cut connection resumes instead of
+      # starting the 1.75 GB again. Shared with client-builder on purpose --
+      # both are "large archives fetched once".
+      - client-cache:/var/cache/m2client
+
+    command: ["sh", "/opt/fetch-web-client.sh", "install", "--target", "/out/browser"]
+
+  # See wsbridge/README.md for what the browser client has to know.
+  # ---------------------------------------------------------------------------
+  wsbridge:
+    build:
+      context: ./wsbridge
+      dockerfile: Dockerfile
+    image: metin2/wsbridge:latest
+    container_name: metin2-wsbridge
+    profiles: ["browser"]
+    restart: unless-stopped
+    init: true
+
+    depends_on:
+      - game
+
+    environment:
+      # The one host it will ever dial. The client names a host in the URL --
+      # that is its protocol, and this obeys the shape but not the host: the
+      # name is read, logged and discarded, and the socket goes here. A bridge
+      # that dialled the name would be an open proxy, which is exactly what the
+      # client tree's own Go version is (correctly, for a player's own machine;
+      # not for a server). See wsbridge/README.md.
+      M2_BRIDGE_TARGET_HOST: "game"
+      # The game's own port numbers, which inside this network are what they
+      # are regardless of how they are published on the host.
+      M2_BRIDGE_AUTH_PORT: "11000"
+      M2_BRIDGE_CHANNELS: "${M2_CHANNELS:-1}"
+      M2_BRIDGE_LISTEN_PORT: "7789"
+      M2_BRIDGE_BIND: "0.0.0.0"
+
+      M2_BRIDGE_MAX_CONNECTIONS: "${M2_BRIDGE_MAX_CONNECTIONS:-200}"
+      M2_BRIDGE_MAX_PER_IP: "${M2_BRIDGE_MAX_PER_IP:-8}"
+      # Behind nginx every connection arrives from the same address, so without
+      # this the per-address limit would cap the whole server at eight. The
+      # installer sets it to 1 only when the bridge is published on 127.0.0.1
+      # and nothing but nginx can reach it.
+      M2_BRIDGE_TRUST_PROXY: "${M2_BRIDGE_TRUST_PROXY:-0}"
+      M2_BRIDGE_ORIGINS: "${M2_BRIDGE_ORIGINS:-}"
+
+      TZ: "${M2_TZ:-UTC}"
+
+    ports:
+      # 127.0.0.1 by default: on a server with a domain, nginx is the only
+      # thing that should reach this, and it does so over loopback. Without a
+      # domain the installer publishes it on every interface instead, because
+      # then the page is plain HTTP and the browser connects to it directly.
+      - "${M2_BRIDGE_BIND_ADDRESS:-127.0.0.1}:${M2_BRIDGE_PORT:-7789}:7789/tcp"
+
     networks: [backend]
 
   # ---------------------------------------------------------------------------

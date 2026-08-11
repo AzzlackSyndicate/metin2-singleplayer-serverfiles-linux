@@ -101,6 +101,24 @@ DROP_DOMAIN=0   # --no-domain: forget the domain an earlier run set up
 AUTH_PORT="${M2_AUTH_PORT:-11000}"
 GAME_PORTS="${M2_GAME_PORT_RANGE:-13000-13002}"
 PANEL_PORT="${M2_PANEL_PUBLIC_PORT:-7788}"
+# The WebSocket bridge for the browser client. Off unless the operator turns it
+# on in .env, and this installer never turns it on by itself: it is only useful
+# once a browser client has been put on the panel's volume, and until then it
+# would be a port open for nothing.
+BRIDGE_PORT="${M2_BRIDGE_PORT:-7789}"
+BROWSER_PLAY=0
+
+# Which clients this install offers -- decided by choose_clients(): from flags
+# if any were passed, from what is already installed when this is an update,
+# otherwise from one question. WANT_WEB_FLAG stays empty unless the operator
+# actually passed --web-client or --no-web-client, so "never asked" and
+# "answered no" remain distinguishable; without that an update could not tell a
+# deliberate no from a default.
+WANT_WEB=0
+WANT_DESKTOP=1
+WANT_WEB_FLAG=""
+HAVE_WEB=0
+HAVE_DESKTOP=0
 
 # Snapshotted before the command line is read, so replay_command() can tell an
 # option somebody actually gave from a default that happens to equal it. Taken
@@ -373,6 +391,8 @@ usage() {
     --game-ports A-B      channel ports (default: 13000-13002)
     --panel-port N        admin panel port (default: 7788)
     --no-client           don't build the downloadable game client
+    --web-client          install the browser client (~1.8 GB) without asking
+    --no-web-client       don't install the browser client, and don't ask
     --no-firewall         don't touch the firewall
     --help                this text
 
@@ -402,7 +422,9 @@ parse_args() {
             --dry-run)       DRY_RUN=1; shift ;;
             --local)         LOCAL_ONLY=1; shift ;;
             --no-domain)     DOMAIN=""; DROP_DOMAIN=1; shift ;;
-            --no-client)     SKIP_CLIENT=1; shift ;;
+            --no-client)     SKIP_CLIENT=1; WANT_DESKTOP=0; shift ;;
+            --web-client)    WANT_WEB_FLAG=1; shift ;;
+            --no-web-client) WANT_WEB_FLAG=0; shift ;;
             --no-firewall)   SKIP_FIREWALL=1; shift ;;
             --address)       PUBLIC_ADDRESS="${2:-}"; shift 2 ;;
             --domain)        DOMAIN="${2:-}"; shift 2 ;;
@@ -1431,6 +1453,45 @@ write_env() {
     # The client the panel offers for download is built for this address.
     env_set "$_env" M2_CLIENT_ADDRESS "$PUBLIC_ADDRESS"
 
+    # --- the client that runs in a browser ----------------------------------
+    #
+    # Whatever the operator set stays set, and an install that has never heard
+    # of this gets a 0. The installer does not turn it on by itself: the bridge
+    # is only useful once a browser client has been placed on the panel's
+    # volume, and before that it would be a port open for nothing.
+    #
+    # The rest is derived, because getting it wrong is invisible until a player
+    # tries to play:
+    #
+    #   with a domain : the bridge listens on 127.0.0.1 and nginx reaches it
+    #                   there, so the page's WebSocket is wss:// on the same
+    #                   host and certificate. A page served over HTTPS may not
+    #                   open a ws:// connection at all -- the browser refuses
+    #                   it as mixed content, silently, and there is nothing the
+    #                   page can do about it. So this is not a preference.
+    #   otherwise     : the panel is plain HTTP anyway, so the bridge is
+    #                   published on its own port and the page connects to it
+    #                   directly.
+    # choose_clients() has already decided; it read the old value out of what is
+    # installed rather than out of this file, so an operator who removed the
+    # browser client by hand is not told it is still there.
+    BROWSER_PLAY="$WANT_WEB"
+    case "$BROWSER_PLAY" in 1|true|yes|on) BROWSER_PLAY=1 ;; *) BROWSER_PLAY=0 ;; esac
+    env_set "$_env" M2_BROWSER_PLAY "$BROWSER_PLAY"
+    _bp=$(env_get "$_env" M2_BRIDGE_PORT || true)
+    [ -n "$_bp" ] && BRIDGE_PORT="$_bp"
+    env_set "$_env" M2_BRIDGE_PORT "$BRIDGE_PORT"
+    if [ -n "$DOMAIN" ] || [ "$LOCAL_ONLY" = "1" ]; then
+        env_set "$_env" M2_BRIDGE_BIND_ADDRESS "127.0.0.1"
+        # Behind nginx every connection arrives from the same address, so the
+        # bridge would count them all as one player and cut the eighth one off.
+        # Only safe because of the line above: nothing but nginx can reach it.
+        env_set "$_env" M2_BRIDGE_TRUST_PROXY "$([ -n "$DOMAIN" ] && echo 1 || echo 0)"
+    else
+        env_set "$_env" M2_BRIDGE_BIND_ADDRESS "0.0.0.0"
+        env_set "$_env" M2_BRIDGE_TRUST_PROXY "0"
+    fi
+
     good "Settings written to $_env (readable only by root)"
 }
 
@@ -1605,6 +1666,10 @@ open_firewall() {
                 run ufw allow 443/tcp >/dev/null 2>&1 || true
             else
                 run ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
+                # Only when the browser client is switched on, and only without
+                # a domain: with one, nginx reaches the bridge over loopback and
+                # nothing needs to be opened for it.
+                [ "$BROWSER_PLAY" = "1" ] &&                     run ufw allow "${BRIDGE_PORT}/tcp" >/dev/null 2>&1 || true
             fi
             good "ufw rules added."
             ufw_docker_warning ;;
@@ -1617,6 +1682,7 @@ open_firewall() {
                 run firewall-cmd --permanent --add-port=443/tcp >/dev/null 2>&1 || true
             else
                 run firewall-cmd --permanent --add-port="${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
+                [ "$BROWSER_PLAY" = "1" ] &&                     run firewall-cmd --permanent --add-port="${BRIDGE_PORT}/tcp" >/dev/null 2>&1 || true
             fi
             run firewall-cmd --reload >/dev/null 2>&1 || true
             good "firewalld rules added and reloaded."
@@ -1627,6 +1693,7 @@ open_firewall() {
             say "Found plain iptables (no ufw, no firewalld)."
             run iptables -I INPUT -p tcp --dport "$AUTH_PORT" -j ACCEPT 2>/dev/null || true
             run iptables -I INPUT -p tcp --dport "$PANEL_PORT" -j ACCEPT 2>/dev/null || true
+            [ "$BROWSER_PLAY" = "1" ] && [ -z "$DOMAIN" ] &&                 run iptables -I INPUT -p tcp --dport "$BRIDGE_PORT" -j ACCEPT 2>/dev/null || true
             run iptables -I INPUT -p tcp --match multiport --dports "${_game_from}:${_game_to}" -j ACCEPT 2>/dev/null || true
             if [ -n "$DOMAIN" ]; then
                 run iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
@@ -1648,7 +1715,8 @@ open_firewall() {
             warn "If players cannot connect but the server is running, that is"
             warn "almost certainly where the block is. Open TCP ports:"
             warn "    ${AUTH_PORT}  and  ${GAME_PORTS}"
-            if [ -n "$DOMAIN" ]; then warn "    80 and 443"; else warn "    ${PANEL_PORT}"; fi ;;
+            if [ -n "$DOMAIN" ]; then warn "    80 and 443"; else warn "    ${PANEL_PORT}"; fi
+            [ "$BROWSER_PLAY" = "1" ] && [ -z "$DOMAIN" ] && warn "    ${BRIDGE_PORT}  (playing in the browser)" ;;
     esac
 }
 
@@ -1860,6 +1928,68 @@ _write_nginx_conf() {
         fi
     fi
 
+    # ---- the browser client's 1.7 GB of static files -----------------------
+    #
+    # 421 files: index.html, index.js, a 14.7 MB index.wasm, a 3.1 MB
+    # manifest.bin and 408 content-addressed blobs of about 4 MB each. Pushing
+    # that through the panel would occupy its worker threads for as long as a
+    # player is loading, which is minutes -- the same reason the client download
+    # is handed to nginx. Here it is simpler: the files are static, so nginx
+    # serves them itself and the panel is not in the path at all.
+    #
+    # The three caching rules are taken from the client's own static server
+    # (dist/browser/serve-webfs.py), not invented. Getting them wrong is not
+    # slow, it is broken: a cached manifest.bin makes a patched client load the
+    # previous corpus, which presents as missing files rather than as a stale
+    # cache.
+    #
+    # Only written when nginx can actually read the panel's volume -- the same
+    # test the client download already does. Otherwise the panel serves /play
+    # itself, which works and is slow, and that is far better than a location
+    # that 404s every blob.
+    if [ "$NGINX_ACCEL" = "yes" ] && [ -n "$_zip_dir" ]; then
+        _play_block="    # /play without the slash goes to the PANEL, which redirects to /play/
+    # with the parameters that tell the client where the bridge is. A redirect
+    # here would drop them, and the player would land on the connection dialog
+    # being asked for an address they have no way of knowing.
+    location = /play {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host  \$host;
+        proxy_set_header X-Forwarded-For   \$remote_addr;
+    }
+
+    location /play/ {
+        alias $_zip_dir/browser/;
+        index index.html;
+        access_log off;
+
+        types {
+            application/wasm              wasm;
+            text/javascript               js;
+            text/html                     html;
+            text/plain                    dev;
+            application/octet-stream      bin;
+        }
+        default_type application/octet-stream;
+
+        # gzip_static picks up <blob>.gz twins if the operator ever builds them
+        # (build-webfs.py --gzip). The blobs are not compressed on the fly:
+        # doing it per visitor for 1.7 GB costs more than the 40% it saves. The
+        # small mutable files are worth it and are.
+        gzip on;
+        gzip_types text/javascript application/wasm text/html;
+        gzip_min_length 4096;
+        gzip_static on;
+
+        # The rule per file comes from the map above, which is where the three
+        # cases are written out.
+        add_header Cache-Control \$m2_play_cache always;
+        add_header Access-Control-Allow-Origin \"*\" always;
+    }"
+    fi
+
     # Real visitor addresses when Cloudflare is in front. Without this the
     # panel's per-IP download quota and login rate limit would see every
     # visitor as the same one and lock everybody out together.
@@ -1936,6 +2066,19 @@ limit_req_status 429;
 map \$request_method \$auth_key { default ""; POST \$binary_remote_addr; }
 limit_req_zone \$auth_key zone=panelauth:10m rate=10r/m;
 
+# How long each of the browser client's files may be cached. The three cases are
+# the client's own (dist/browser/serve-webfs.py), and they are rules rather than
+# tuning: <hash>.bin can be kept forever because the name IS the hash of the
+# contents, and manifest.bin must never be kept because a cached one makes a
+# patched client load the previous corpus -- which presents as missing files,
+# not as a stale cache.
+map \$uri \$m2_play_cache {
+    default                          "no-cache";
+    "~^/play/[0-9a-f]{32}\.bin\$"      "public, max-age=31536000, immutable";
+    "~^/play/manifest\.bin\$"          "no-store";
+    "~^/play/index\.dev\$"             "no-store";
+}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -1979,6 +2122,49 @@ $_dl_proto
         proxy_buffering    off;
     }
 
+    # ---- the client that runs in a browser ---------------------------------
+    #
+    # Written whether or not anyone has switched it on: with the bridge stopped
+    # these answer 502 to requests nobody makes, and having them here means
+    # turning the feature on later needs no change to nginx.
+    #
+    # THE SHAPE IS THE CLIENT'S, NOT A CHOICE. The browser client reads the
+    # bridge's address out of its own page URL with
+    #     /[?&]serverHost=([A-Za-z0-9.\-]+)/
+    # -- a character class that excludes "/" deliberately, so a path cannot be
+    # smuggled into it. The bridge can therefore only ever be named as
+    # host:port, never as a path on this site. And a page served over HTTPS may
+    # not open a ws:// connection at all: the browser blocks it as mixed
+    # content, silently. The two together leave exactly one arrangement that
+    # works behind TLS -- this host and this port, with the two URL prefixes
+    # the client actually uses routed through to the bridge:
+    #
+    #   /to/<host>:<port>   every game connection, as a WebSocket
+    #   /ping               the page's connection gate, before it will start
+    #
+    # so the panel tells the page serverHost=<this domain> and serverPort=443.
+    location /to/ {
+        proxy_pass http://127.0.0.1:$BRIDGE_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host             \$host;
+        proxy_set_header X-Forwarded-For  \$remote_addr;
+        # A player standing still sends nothing for minutes at a time, and the
+        # default of 60s would drop them mid-game.
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+        proxy_buffering     off;
+    }
+
+    location = /ping {
+        proxy_pass http://127.0.0.1:$BRIDGE_PORT/ping;
+        proxy_set_header Host            \$host;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+    }
+
+$_play_block
+
     # Everything with a password on it.
     location ~ ^/(login|register|account(/.*)?|reset(/.*)?)\$ {
         limit_req zone=panelauth burst=10 nodelay;
@@ -2002,6 +2188,65 @@ $_dl_proto
     }
 }
 NGX
+}
+
+# =============================================================================
+#  The client that runs in a browser.
+#
+#  Two halves, and this handles the half that lives in the stack: the bridge
+#  that turns a browser's WebSocket into a TCP connection to the game. The
+#  other half -- the client itself, built to WebAssembly -- is placed on the
+#  panel's volume by hand, because it is built from game data that is not ours
+#  to redistribute.
+#
+#  The bridge is in a compose profile, so it is started only on purpose. An
+#  install that has not switched this on never builds it, never runs it and is
+#  not affected by any of this.
+# =============================================================================
+start_browser_bridge() {
+    [ "$DRY_RUN" = "1" ] && { info "[dry-run] browser bridge: M2_BROWSER_PLAY=$BROWSER_PLAY"; return 0; }
+
+    if [ "$BROWSER_PLAY" != "1" ]; then
+        # Switched off. If a previous run started it, take it away -- leaving a
+        # port open that the panel no longer points anybody at is the worst of
+        # both answers.
+        if docker inspect metin2-wsbridge >/dev/null 2>&1; then
+            step "Playing in the browser"
+            say "M2_BROWSER_PLAY is 0 now, so the WebSocket bridge is being stopped."
+            dc --profile browser rm -sf wsbridge >/dev/null 2>&1 || true
+            good "The bridge is stopped. The game itself is untouched."
+        fi
+        return 0
+    fi
+
+    step "Playing in the browser"
+
+    if ! dc --profile browser config --services 2>/dev/null | grep -qx 'wsbridge'; then
+        warn "M2_BROWSER_PLAY=1, but these server files have no wsbridge service."
+        warn "They are older than this feature. Nothing else is affected."
+        return 0
+    fi
+
+    say "Starting the WebSocket bridge, which is what lets a browser reach a"
+    say "game server that speaks TCP."
+    if dc --profile browser up -d --build wsbridge; then
+        good "The bridge is running."
+        if [ -n "$DOMAIN" ]; then
+            info "reachable at https://$DOMAIN/to/ and /ping -- nginx gives it"
+            info "the certificate, on the panel's own port."
+        else
+            info "reachable on port $BRIDGE_PORT."
+        fi
+        say ""
+        say "The panel shows a 'Play in the browser' button once a browser"
+        say "client is on its volume, and not before -- there would be nothing"
+        say "behind it. To put one there:"
+        say "    docker compose cp ./browser panel:/usr/local/m2panel/browser"
+    else
+        warn "The bridge did not start. Playing in the browser will not work;"
+        warn "everything else is unaffected. To see why:"
+        warn "    cd $INSTALL_DIR && docker compose --profile browser logs wsbridge"
+    fi
 }
 
 # =============================================================================
@@ -2196,6 +2441,12 @@ summary() {
         printf '     Channel ports  : %s\n' "$GAME_PORTS"
         printf '\n'
     fi
+    if [ "$BROWSER_PLAY" = "1" ]; then
+        printf '     Playing in the browser is switched on. The panel offers it\n'
+        printf '     once a browser client is on its volume:\n'
+        printf '         docker compose cp ./browser panel:/usr/local/m2panel/browser\n'
+        printf '\n'
+    fi
     printf '\n'
     printf '  %sDay to day%s\n' "$C_BOLD" "$C_RESET"
     printf '\n'
@@ -2335,6 +2586,160 @@ summary() {
 }
 
 # =============================================================================
+#  Which clients this server offers
+#
+#  Two ways to play, and they cost very different amounts to install:
+#
+#      desktop   Reference_Client.zip, 1.29 GB, built into a download for the
+#                panel's button. What every Metin2 server has always offered.
+#      browser   Reference_WebClientEngine.zip (17.6 MB) + Reference_
+#                WebClientData.zip (1.75 GB). No download, no install: a link.
+#
+#  A server that offers only one must not pay for the other -- choosing the
+#  desktop client alone should not drag in 1.75 GB nobody will ever read. That
+#  is the whole reason these are separate archives.
+#
+#  On an update nothing is asked when both are already there: this runs
+#  unattended for some people and a question would hang it forever. When one is
+#  missing it is offered, because that is the only moment the operator finds out
+#  the other way exists.
+# =============================================================================
+
+# What is on the panel's volume right now. Asked of the panel container, because
+# a Docker volume is a Docker object: reading it from the host means guessing at
+# a storage driver, and that guess is wrong on rootless and on remote daemons.
+#
+# Sets HAVE_WEB / HAVE_DESKTOP. Never fails the install -- if the stack is not
+# up yet, both are simply 0, which is the truth.
+detect_installed_clients() {
+    HAVE_WEB=0
+    HAVE_DESKTOP=0
+    [ "$DRY_RUN" = "1" ] && return 0
+    # A first install has nothing installed by definition, and asking anyway
+    # would BUILD the panel image just to be told so -- minutes of work for an
+    # answer we already have.
+    [ "$FRESH_INSTALL" = "1" ] && return 0
+    [ -f "$INSTALL_DIR/docker-compose.yml" ] || return 0
+
+    _seen=$(dc run --rm --no-deps --entrypoint sh panel -c '
+        [ -f /usr/local/m2panel/browser/current/index.html ] && echo web
+        [ -f /usr/local/m2panel/client.zip ]                 && echo desktop
+        exit 0' 2>/dev/null) || return 0
+
+    case "$_seen" in *web*)     HAVE_WEB=1 ;; esac
+    case "$_seen" in *desktop*) HAVE_DESKTOP=1 ;; esac
+    return 0
+}
+
+choose_clients() {
+    step "Which clients your players get"
+
+    # An explicit flag always wins over a question, so an unattended run can say
+    # exactly what it wants. --no-client already means "no desktop client".
+    if [ -n "$WANT_WEB_FLAG" ] || [ "$SKIP_CLIENT" = "1" ]; then
+        [ -n "$WANT_WEB_FLAG" ] && WANT_WEB="$WANT_WEB_FLAG"
+        [ "$SKIP_CLIENT" = "1" ] && WANT_DESKTOP=0
+        info "taken from the options you passed"
+        return 0
+    fi
+
+    detect_installed_clients
+
+    if [ "$FRESH_INSTALL" = "0" ]; then
+        if [ "$HAVE_WEB" = "1" ] && [ "$HAVE_DESKTOP" = "1" ]; then
+            WANT_WEB=1; WANT_DESKTOP=1
+            good "Both clients are installed -- keeping both up to date."
+            return 0
+        fi
+        WANT_WEB="$HAVE_WEB"
+        WANT_DESKTOP="$HAVE_DESKTOP"
+        if [ "$HAVE_WEB" = "0" ]; then
+            # An install that predates the browser client falls in here. It keeps
+            # working untouched; this is only an offer.
+            #
+            # The default follows what the operator already asked for: somebody
+            # who set M2_BROWSER_PLAY=1 by hand wanted this and is missing only
+            # the files, so saying "no" for them would be rude. Everyone else
+            # gets "no" -- 1.8 GB is not something to talk anyone into.
+            _prev=$(env_get "$INSTALL_DIR/.env" M2_BROWSER_PLAY 2>/dev/null || true)
+            case "$_prev" in 1|true|yes|on) _def="y" ;; *) _def="n" ;; esac
+            say "This server offers the desktop client only."
+            say "The browser client lets players play from a link -- no download,"
+            say "no install. It needs about 1.8 GB on this machine."
+            [ "$_def" = "y" ] && \
+                say "(M2_BROWSER_PLAY is already 1 here, so only the files are missing.)"
+            ask_yes_no "Add the browser client?" "$_def" && WANT_WEB=1
+        fi
+        if [ "$HAVE_DESKTOP" = "0" ]; then
+            say "This server offers the browser client only."
+            say "The desktop client is the classic download behind the panel's button."
+            ask_yes_no "Add the desktop client as well?" "n" && WANT_DESKTOP=1
+        fi
+        [ "$WANT_DESKTOP" = "0" ] && SKIP_CLIENT=1
+        return 0
+    fi
+
+    # A first install: ask once, with the sizes, because that is what the
+    # decision actually turns on.
+    say ""
+    say "  1  Browser only    players click a link and play        ~1.8 GB"
+    say "  2  Desktop only    the classic download in the panel     ~1.3 GB"
+    say "  3  Both                                                  ~3.1 GB"
+    say ""
+    while :; do
+        _pick=$(ask_value "Which one" "3")
+        case "$_pick" in
+            1) WANT_WEB=1; WANT_DESKTOP=0; break ;;
+            2) WANT_WEB=0; WANT_DESKTOP=1; break ;;
+            3) WANT_WEB=1; WANT_DESKTOP=1; break ;;
+            *) warn "Type 1, 2 or 3." ;;
+        esac
+    done
+    [ "$WANT_DESKTOP" = "0" ] && SKIP_CLIENT=1
+    return 0
+}
+
+# Put the browser client on the panel's volume. A task container: it runs,
+# writes and exits. Only what is out of date is fetched -- an engine-only fix is
+# 17.6 MB, which is why the two archives are separate in the first place.
+fetch_web_client() {
+    [ "$WANT_WEB" = "1" ] || return 0
+    step "Fetching the browser client"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        info "[dry-run] docker compose --profile webclient run --rm webclient-fetcher"
+        return 0
+    fi
+
+    if ! grep -q 'webclient-fetcher' "$INSTALL_DIR/docker-compose.yml" 2>/dev/null; then
+        warn "These server files have no webclient-fetcher service."
+        warn "Update the repository to get the browser client."
+        WANT_WEB=0
+        return 0
+    fi
+
+    # Its own exit codes say what went wrong, so this can be specific rather than
+    # "it failed". The install is NOT aborted: a server whose game runs is worth
+    # having even when the browser client could not be fetched.
+    if dc --profile webclient run --rm webclient-fetcher; then
+        good "Browser client installed."
+        return 0
+    fi
+    _rc=$?
+    case "$_rc" in
+        3) warn "The fetcher is missing a tool it needs (unzip, curl, megatools)." ;;
+        4) warn "A download did not finish. Check this machine's connection, then run the installer again." ;;
+        5) warn "A downloaded archive had the wrong checksum -- damaged, or replaced." ;;
+        7) warn "Not enough disk space for the browser client (~1.8 GB unpacked)." ;;
+        8) warn "The MEGA link for the browser client's data has not been filled in yet." ;;
+        *) warn "Fetching the browser client failed (exit $_rc)." ;;
+    esac
+    warn "The server itself is unaffected. Re-run the installer to try again."
+    WANT_WEB=0
+    return 0
+}
+
+# =============================================================================
 #  main
 # =============================================================================
 
@@ -2362,12 +2767,22 @@ main() {
     fetch_stack
     choose_address
     choose_domain
+    # Before write_env, because the answer decides M2_BROWSER_PLAY -- the bridge
+    # must not be turned on for a server that has no browser client to serve.
+    choose_clients
     write_env
     write_local_override
     start_stack
     wait_healthy
     open_firewall
     setup_tls
+    # Before the bridge: the panel shows its Play button only once an index.html
+    # is actually on the volume, and a bridge with nothing to serve is a port
+    # open for nothing.
+    fetch_web_client
+    # After setup_tls, because with a domain the bridge is reached through the
+    # nginx that step writes.
+    start_browser_bridge
     start_client_build
     summary
 }

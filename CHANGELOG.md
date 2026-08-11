@@ -17,6 +17,72 @@ every version here.
 
 ---
 
+## 1.11.0 — 2026-08-11
+
+> [!TIP]
+> ## **The Web Client is now available to install.**
+>
+> **Your players can play in the browser — no download, no installation, just a
+> link.** The installer asks which clients you want and fetches what it needs:
+> browser only, desktop only, or both. An existing server keeps working
+> untouched; on your next update you are simply offered the browser client.
+
+### Added
+
+- **The installer offers a choice of clients.** On a first install: browser
+  only, desktop only, or both, with what each costs on disk. On an update
+  nothing is asked when both are already installed; when one is missing it is
+  offered, because that is the only moment you find out the other way exists.
+- Only what you chose is downloaded. A browser-only server never fetches the
+  1.29 GB desktop client, and a desktop-only server never fetches the 1.75 GB
+  browser corpus.
+- **The browser client is fetched, verified and installed for you** — no more
+  placing files on a volume by hand. `webclient-fetcher` is a task container in
+  the `webclient` profile: it runs, writes to the panel's volume, and exits.
+- `artifacts.json` at the top of the repository says where the five archives
+  come from and what they must hash to. The engine's URL is derived from its
+  version, so publishing a new one is: attach the file to the release, change
+  two lines here.
+- The browser client is two archives on purpose: the engine (17.6 MB) and the
+  game data (1.75 GB). Nearly every fix touches only the engine, so an update
+  costs 17.6 MB rather than 1.75 GB.
+- Nothing is ever written over. Each version is unpacked beside what is running,
+  checked, and only then is `current` moved — a rename, which either happens or
+  does not. There is no instant at which a player is handed half an engine, and
+  a rollback is one symlink.
+- **A WebSocket bridge**, so a browser can reach a game server that speaks TCP.
+  It is the `wsbridge` service, it is in a compose profile, and
+  `docker compose up -d` does not start it or build it.
+- The bridge speaks the browser client's own protocol: one port, with the
+  destination in the path as `/to/<host>:<port>`, and a `/ping` the client's
+  connection dialog checks before it will start.
+- It only ever connects to the game container. The host named in the URL is
+  read, logged and discarded; the port must be one the game runs on. The db
+  core and the cores' peer-to-peer ports are refused even when named
+  explicitly.
+- **Play in the browser** on the panel's front page, with the client served
+  from `/play/`. It appears only when `M2_BROWSER_PLAY=1`, a browser client is
+  on the panel's volume, and the bridge answers.
+- The button carries the address in the link the client expects
+  (`?serverHost=…&serverPort=…`), so the page goes straight into the game
+  instead of asking the player for an address.
+- nginx serves `/play/` off the panel's volume directly, with the cache rules
+  the client needs — content-addressed blobs kept for a year, `manifest.bin`
+  never kept. It is 1.7 GB in 421 files.
+- With a domain, nginx routes `/to/` and `/ping` to the bridge on port 443. The
+  client cannot be given a path and an HTTPS page cannot open a plain
+  WebSocket, so this is the only arrangement that works behind TLS.
+- `M2_BROWSER_PLAY`, `M2_BRIDGE_PORT`, `M2_BRIDGE_BIND_ADDRESS`,
+  `M2_BRIDGE_TRUST_PROXY`, `M2_BRIDGE_HOST_ALIASES`,
+  `M2_BRIDGE_MAX_CONNECTIONS`, `M2_BRIDGE_MAX_PER_IP` and `M2_BRIDGE_ORIGINS`
+  in `.env`.
+- Both installers start the bridge when `M2_BROWSER_PLAY=1` and stop it when it
+  is set back to 0. On Linux the firewall step opens its port only on a server
+  without a domain.
+- The browser client itself is not part of this project — it carries game data,
+  which this repository never does. It is fetched from its own archives, whose
+  addresses and checksums are in `artifacts.json`.
+
 ## 1.10.0 — 2026-08-11
 
 ### Fixed

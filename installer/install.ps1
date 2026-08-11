@@ -115,6 +115,21 @@ $script:InstallDir        = ''
 $script:AuthPort          = 11000
 $script:GamePorts         = '13000-13002'
 $script:PanelPort         = 7788
+# The WebSocket bridge for the browser client. Off unless .env already says
+# otherwise; this installer never switches it on by itself, because it is only
+# useful once a browser client has been put on the panel's volume.
+$script:BrowserPlay       = '0'
+
+# Which clients this install offers -- decided by Select-Clients. WantWebFlag
+# stays $null unless -WebClient or -NoWebClient was actually passed, so "never
+# asked" and "answered no" stay apart; without that a re-run could not tell a
+# deliberate no from a default.
+$script:WantWeb           = $false
+$script:WantDesktop       = $true
+$script:WantWebFlag       = $null
+$script:HaveWeb           = $false
+$script:HaveDesktop       = $false
+$script:BridgePort        = '7789'
 $script:PanelPassword     = ''
 $script:PanelPasswordKnown = $true
 $script:PanelPasswordNew   = $true
@@ -1444,7 +1459,94 @@ downloaded server files, the client -- is kept either way.
     # so an address in front of the port is all it takes to bind it to loopback.
     Set-EnvValue $envPath 'M2_PANEL_PUBLIC_PORT' "127.0.0.1:$($script:PanelPort)"
 
+    # --- the client that runs in a browser ----------------------------------
+    #
+    # Whatever you set stays set, and an install that has never heard of this
+    # gets a 0. The installer does not switch it on by itself: the bridge is
+    # only useful once a browser client has been put on the panel's volume, and
+    # before that it would be a container running for nothing.
+    #
+    # A browser cannot open a TCP socket and the game speaks TCP, so a page
+    # that wants to play needs the `wsbridge' service beside the server. It is
+    # in a compose profile and is not started by `docker compose up -d'.
+    #
+    # Everything here is on 127.0.0.1, which is what a Windows install is. The
+    # panel is plain HTTP on loopback, so the page uses ws:// -- and a browser
+    # treats localhost as secure, so nothing is blocked as mixed content the
+    # way it would be on an HTTPS site without a certificate for the bridge.
+    #
+    # The page is told the address in its own URL (?serverHost=&serverPort=),
+    # which is how the browser client takes it; the panel builds that link.
+    # Select-Clients has already decided, and it read the previous state out of
+    # what is installed rather than out of this file -- so somebody who removed
+    # the browser client by hand is not told it is still there.
+    $browserPlay = if ($script:WantWeb) { '1' } else { '0' }
+    $script:BrowserPlay = $browserPlay
+    Set-EnvValue $envPath 'M2_BROWSER_PLAY' $browserPlay
+    $bridgePort = Get-EnvValue $envPath 'M2_BRIDGE_PORT'
+    if (-not $bridgePort) { $bridgePort = '7789' }
+    $script:BridgePort = $bridgePort
+    Set-EnvValue $envPath 'M2_BRIDGE_PORT'         $bridgePort
+    Set-EnvValue $envPath 'M2_BRIDGE_BIND_ADDRESS' '127.0.0.1'
+    Set-EnvValue $envPath 'M2_BRIDGE_TRUST_PROXY'  '0'
+
     Write-Good "Settings written to $envPath"
+}
+
+# =============================================================================
+#  The client that runs in a browser.
+#
+#  Only the bridge lives in the stack. The client itself -- built to
+#  WebAssembly -- is put on the panel's volume by hand, because it is built
+#  from game data that is not ours to hand out.
+#
+#  Switched off, this does nothing at all, except stop a bridge an earlier run
+#  started. An install that has never heard of this never builds the image.
+# =============================================================================
+function Start-BrowserBridge {
+    if ($script:DryRun) {
+        Write-Info "[dry-run] browser bridge: M2_BROWSER_PLAY=$($script:BrowserPlay)"
+        return
+    }
+
+    if ($script:BrowserPlay -ne '1') {
+        if ((Invoke-Native 'docker' @('inspect', 'metin2-wsbridge')).Code -eq 0) {
+            Write-Step 'Playing in the browser'
+            Write-Say 'M2_BROWSER_PLAY is 0 now, so the WebSocket bridge is being stopped.'
+            Invoke-ComposeQuiet @('--profile', 'browser', 'rm', '-sf', 'wsbridge') | Out-Null
+            Write-Good 'The bridge is stopped. The game itself is untouched.'
+        }
+        return
+    }
+
+    Write-Step 'Playing in the browser'
+
+    # wsbridge sits behind the "browser" profile, so a plain 'config --services'
+    # does not list it -- the profile has to be asked for by name.
+    $svc = Invoke-ComposeQuiet @('--profile', 'browser', 'config', '--services')
+    $haveBridge = (($svc.Output -split "`n" | ForEach-Object { $_.Trim() }) -contains 'wsbridge')
+    if (-not $haveBridge) {
+        Write-Warn 'M2_BROWSER_PLAY=1, but these server files have no wsbridge service.'
+        Write-Warn 'They are older than this feature. Nothing else is affected.'
+        return
+    }
+
+    Write-Say 'Starting the WebSocket bridge, which is what lets a browser reach a'
+    Write-Say 'game server that speaks TCP.'
+    # Invoke-Compose hands back the exit code, so 0 is the good answer.
+    if ((Invoke-Compose @('--profile', 'browser', 'up', '-d', '--build', 'wsbridge')) -eq 0) {
+        Write-Good "The bridge is running on 127.0.0.1:$($script:BridgePort)."
+        Write-Say ''
+        Write-Say "The panel shows a 'Play in the browser' button once a browser"
+        Write-Say 'client is on its volume, and not before -- there would be nothing'
+        Write-Say 'behind it. To put one there:'
+        Write-Say '    docker compose cp .\browser panel:/usr/local/m2panel/browser'
+    }
+    else {
+        Write-Warn 'The bridge did not start. Playing in the browser will not work;'
+        Write-Warn 'everything else is unaffected. To see why:'
+        Write-Warn "    docker compose --profile browser logs wsbridge"
+    }
 }
 
 function Write-LoopbackOverride {
@@ -2131,6 +2233,157 @@ exit $rc
     return $path
 }
 
+# =============================================================================
+#  Which clients this install offers
+#
+#  The Linux installer asks the same question in the same order; the two are
+#  kept in step deliberately. See choose_clients() in install.sh.
+#
+#      desktop   the classic download, built from Reference_Client.zip
+#      browser   a link: Reference_WebClientEngine.zip (17.6 MB) plus
+#                Reference_WebClientData.zip (1.75 GB)
+#
+#  On a re-run nothing is asked when both are already there. When one is
+#  missing it is offered -- that is the only moment somebody finds out the
+#  other way exists.
+# =============================================================================
+function Test-InstalledClients {
+    # Asked of the panel container: a Docker volume is a Docker object, and on
+    # Windows the host cannot see inside one at all -- there is no path to guess
+    # at. Both answers are simply "no" before the stack has ever run, which on a
+    # first install is the truth.
+    $script:HaveWeb     = $false
+    $script:HaveDesktop = $false
+    if ($script:DryRun) { return }
+    # A first install has nothing installed by definition, and asking anyway
+    # would BUILD the panel image just to be told so -- minutes of work for an
+    # answer we already have.
+    if ($script:FreshInstall) { return }
+    if (-not (Test-Path (Join-Path $script:InstallDir 'docker-compose.yml'))) { return }
+
+    $probe = @(
+        '[ -f /usr/local/m2panel/browser/current/index.html ] && echo web'
+        '[ -f /usr/local/m2panel/client.zip ] && echo desktop'
+        'exit 0'
+    ) -join '; '
+
+    $seen = Invoke-DockerQuiet @('compose','run','--rm','--no-deps','--entrypoint','sh','panel','-c',$probe)
+    if ($seen -match 'web')     { $script:HaveWeb     = $true }
+    if ($seen -match 'desktop') { $script:HaveDesktop = $true }
+}
+
+function Select-Clients {
+    Write-Step 'Which clients your players get'
+
+    if ($script:WantWebFlag -ne $null) {
+        $script:WantWeb = $script:WantWebFlag
+        Write-Info 'taken from the options you passed'
+        return
+    }
+
+    Test-InstalledClients
+
+    if ($script:HaveWeb -and $script:HaveDesktop) {
+        $script:WantWeb = $true; $script:WantDesktop = $true
+        Write-Good 'Both clients are installed -- keeping both up to date.'
+        return
+    }
+
+    # -Yes must never block on a question. Keeping what is installed is the
+    # answer that changes nothing, which is what an unattended run wants.
+    if ($script:AssumeYes) {
+        $script:WantWeb     = $script:HaveWeb
+        $script:WantDesktop = $script:HaveDesktop -or -not $script:HaveWeb
+        return
+    }
+
+    if ($script:HaveWeb -or $script:HaveDesktop) {
+        $script:WantWeb     = $script:HaveWeb
+        $script:WantDesktop = $script:HaveDesktop
+        if (-not $script:HaveWeb) {
+            # An install that predates the browser client lands here. It keeps
+            # working untouched; this is only an offer.
+            #
+            # The default follows what was already asked for: somebody who set
+            # M2_BROWSER_PLAY=1 by hand wanted this and is only missing the
+            # files. Everyone else gets "no" -- 1.8 GB is not something to talk
+            # anyone into.
+            $prev = Get-EnvValue (Join-Path $script:InstallDir '.env') 'M2_BROWSER_PLAY'
+            $def  = ($prev -in @('1','true','yes','on'))
+            Say 'This install offers the desktop client only.'
+            Say 'The browser client lets you play from a link -- no download, no'
+            Say 'install. It needs about 1.8 GB on this PC.'
+            if ($def) { Say '(M2_BROWSER_PLAY is already 1 here, so only the files are missing.)' }
+            if (Confirm-YesNo 'Add the browser client?' $def) { $script:WantWeb = $true }
+        }
+        if (-not $script:HaveDesktop) {
+            Say 'This install offers the browser client only.'
+            Say 'The desktop client is the classic download behind the panel button.'
+            if (Confirm-YesNo 'Add the desktop client as well?' $false) { $script:WantDesktop = $true }
+        }
+        return
+    }
+
+    Say ''
+    Say '  1  Browser only    click a link and play              ~1.8 GB'
+    Say '  2  Desktop only    the classic download in the panel  ~1.3 GB'
+    Say '  3  Both                                               ~3.1 GB'
+    Say ''
+    while ($true) {
+        if (-not [Environment]::UserInteractive) { $pick = '3' }
+        else {
+            $pick = Read-Host '  Which one [3]'
+            if ([string]::IsNullOrWhiteSpace($pick)) { $pick = '3' }
+        }
+        switch ($pick.Trim()) {
+            '1' { $script:WantWeb = $true;  $script:WantDesktop = $false; return }
+            '2' { $script:WantWeb = $false; $script:WantDesktop = $true;  return }
+            '3' { $script:WantWeb = $true;  $script:WantDesktop = $true;  return }
+            default { Write-Warn 'Type 1, 2 or 3.' }
+        }
+    }
+}
+
+# Put the browser client on the panel's volume. A task container: it runs,
+# writes and exits. Only what is out of date is fetched -- an engine-only fix
+# costs 17.6 MB, which is why the two archives are separate at all.
+function Get-WebClient {
+    if (-not $script:WantWeb) { return }
+    Write-Step 'Fetching the browser client'
+
+    if ($script:DryRun) {
+        Write-Info '[dry-run] docker compose --profile webclient run --rm webclient-fetcher'
+        return
+    }
+
+    $composeFile = Join-Path $script:InstallDir 'docker-compose.yml'
+    if (-not (Select-String -Path $composeFile -Pattern 'webclient-fetcher' -Quiet -ErrorAction SilentlyContinue)) {
+        Write-Warn 'These server files have no webclient-fetcher service.'
+        Write-Warn 'Update the repository to get the browser client.'
+        $script:WantWeb = $false
+        return
+    }
+
+    # The fetcher's own exit codes, so this says what went wrong rather than
+    # "it failed". The install is NOT aborted: a server whose game runs is worth
+    # having even when the browser client could not be fetched.
+    Invoke-Docker @('compose','--profile','webclient','run','--rm','webclient-fetcher')
+    if ($LASTEXITCODE -eq 0) {
+        Write-Good 'Browser client installed.'
+        return
+    }
+    switch ($LASTEXITCODE) {
+        3 { Write-Warn 'The fetcher is missing a tool it needs (unzip, curl, megatools).' }
+        4 { Write-Warn 'A download did not finish. Check this PC''s connection, then run the installer again.' }
+        5 { Write-Warn 'A downloaded archive had the wrong checksum -- damaged, or replaced.' }
+        7 { Write-Warn 'Not enough disk space for the browser client (~1.8 GB unpacked).' }
+        8 { Write-Warn 'The MEGA link for the browser client''s data has not been filled in yet.' }
+        default { Write-Warn "Fetching the browser client failed (exit $LASTEXITCODE)." }
+    }
+    Write-Warn 'The server itself is unaffected. Run the installer again to retry.'
+    $script:WantWeb = $false
+}
+
 function Start-ClientBuild {
     Write-Step 'The game client'
 
@@ -2704,6 +2957,10 @@ function Invoke-Metin2Install {
         [string]$ReferenceDir = '',
         [string]$Archive = '',
         [string]$LocalContext = '',
+        # Given, these skip the question entirely -- for an unattended run that
+        # knows what it wants. Not given, the installer asks once.
+        [switch]$WebClient,
+        [switch]$NoWebClient,
         [switch]$Help
     )
 
@@ -2724,6 +2981,8 @@ function Invoke-Metin2Install {
     -AuthPort N        login port (default: 11000)
     -GamePorts A-B     channel ports (default: 13000-13002)
     -PanelPort N       admin panel port (default: 7788)
+    -WebClient         install the browser client (~1.8 GB) without asking
+    -NoWebClient       don't install the browser client, and don't ask
     -Help              this text
 
   Where the server comes from:
@@ -2753,6 +3012,10 @@ function Invoke-Metin2Install {
 
     $script:DryRun    = [bool]$DryRun
     $script:AssumeYes = [bool]$Yes
+    # Only set when a switch was actually given -- $null means "not asked yet",
+    # which is what lets a re-run tell a deliberate no from a default.
+    if     ($WebClient)   { $script:WantWebFlag = $true  }
+    elseif ($NoWebClient) { $script:WantWebFlag = $false }
     $script:InstallDir = if ($InstallDir) { $InstallDir }
                          elseif ($env:M2_INSTALL_DIR) { $env:M2_INSTALL_DIR }
                          else { Join-Path $env:USERPROFILE 'Metin2Server' }
@@ -2781,10 +3044,18 @@ function Invoke-Metin2Install {
         Test-Machine
         Initialize-Docker
         Get-Stack
+        # Before Write-Configuration, because the answer decides
+        # M2_BROWSER_PLAY: the bridge must not be switched on for an install
+        # that has no browser client to serve.
+        Select-Clients
         Write-Configuration
         Write-LoopbackOverride
         Start-Stack
         Wait-Healthy
+        # Before the bridge -- the panel shows its Play button only once an
+        # index.html is really on the volume.
+        Get-WebClient
+        Start-BrowserBridge
         Start-ClientBuild
         Show-Summary
     }

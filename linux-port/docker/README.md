@@ -307,7 +307,115 @@ M2_CLIENT_FORCE=rebuild docker compose run --rm client-builder
 
 ---
 
+## Playing in the browser
+
+Off by default, and there is a reason it takes two deliberate steps to switch
+on: half of it is not in these server files.
+
+**A browser cannot open a TCP socket.** The game speaks TCP and nothing else,
+so a page that wants to play needs something beside the server that turns a
+WebSocket into a TCP connection to the game. That is the `wsbridge` service. It
+is in a compose profile, so `docker compose up -d` neither starts nor builds
+it, and a server that never switches this on is not affected by any of it.
+
+The other half is the client itself, built to WebAssembly. It is **not** part of
+this project: it is built from game data that is not ours to hand out, the same
+reason `client.zip` is not shipped here either. You supply it — 421 files and
+about 1.7 GB, of which 408 are content-addressed data blobs.
+
+```sh
+# 1. the bridge
+docker compose --profile browser up -d wsbridge
+
+# 2. the client, onto the panel's volume
+docker compose cp ./browser panel:/usr/local/m2panel/browser
+
+# 3. tell the panel to offer it
+#    M2_BROWSER_PLAY=1 in .env, then
+docker compose up -d panel
+```
+
+The panel then shows a **Play in the browser** button on its front page — and
+only then. It checks all three: the setting, an `index.html` in that directory,
+and that the bridge answers. With any of them missing it shows nothing, which
+is better than a button that leads nowhere.
+
+`install.sh` does step 1 for you whenever `M2_BROWSER_PLAY=1`, and stops the
+bridge again when you set it back to 0.
+
+### Where the page is told to connect
+
+The client reads the bridge's address out of its own page URL, so the panel's
+button links to
+
+    /play/?serverHost=<this server>&serverPort=<port>[&serverTLS=1]
+
+and the page boots straight into the game rather than asking the player for an
+address they have no way of knowing. Those three parameters are the client's
+own; the panel fills them in per request, so nothing has to be rebuilt when the
+server's address or certificate changes.
+
+**Behind a domain the port is 443 — and that is not a preference.** The client
+matches `serverHost` against `[A-Za-z0-9.\-]+`, a pattern that excludes `/` on
+purpose, so the bridge can only ever be named as `host:port` and never as a path
+on your site. And a page served over HTTPS may not open a `ws://` connection at
+all: the browser blocks it as mixed content, silently. The two together leave
+one arrangement, and `install.sh` writes it — nginx on 443 routes the two URL
+prefixes the client uses, `/to/` and `/ping`, through to the bridge, which
+listens on 127.0.0.1 and is not otherwise reachable. Without a domain everything
+is plain HTTP and the bridge is published on port 7789 directly.
+
+nginx also serves `/play/` straight off the panel's volume, with the three cache
+rules the client's own static server documents (content-addressed blobs
+immutable for a year, `manifest.bin` never cached, everything else revalidated).
+Pushing 1.7 GB through the panel would occupy its worker threads for as long as
+a player is loading; where nginx cannot read the volume the panel does it
+anyway, and it works, slowly.
+
+### It is not an open proxy
+
+The bridge dials one host, fixed at startup. The client names a host in every
+WebSocket URL — that is its protocol — and the bridge reads that name, logs it
+and throws it away: the socket goes to the game container whatever a page asks
+for. The **port** from the URL is used, and it must be on a list computed at
+startup from your channel count.
+
+This matters because the client tree ships its own proxy, `m2-ws2tcp`, which
+dials whatever the path names. That is correct for the player running it on
+their own machine, and its `-allow` list checks the **host only** — so even
+pinned, `/to/yourserver:15000` would reach the db core, which speaks an
+unauthenticated protocol. Hence a second implementation on the server side, on
+the same wire. `linux-port/docker/wsbridge/README.md` has the full contract, and
+`wasm-port/scripts/ws_selftest.py` checks every claim in this paragraph without
+a game server, a browser or a client build.
+
+---
+
 ## Troubleshooting
+
+### Playing in the browser does not work
+
+Work down the list — the failures look identical from the page and have
+completely different causes.
+
+* **No button on the front page.** One of the three conditions is not met.
+  `docker compose exec panel ls /usr/local/m2panel/browser` should show an
+  `index.html`; `grep M2_BROWSER_PLAY .env` should say 1; and
+  `docker compose ps wsbridge` should show it running.
+* **The page shows its own connection dialog** asking for a proxy address.
+  It was opened without the parameters — use the panel's button rather than a
+  bookmark of `/play/`.
+* **The dialog says "something answered, but not an m2-ws2tcp proxy".** The
+  page's gate fetched `/ping` and got something else: on a domain that means
+  nginx is answering it instead of passing it through, so re-run `install.sh`.
+  `curl -s https://yourdomain/ping` should start with `m2-ws2tcp`.
+* **The button is there and the game never connects.** Open the browser's
+  developer console. `Mixed Content: ... insecure WebSocket` means the page is
+  HTTPS and the address is `ws://` — re-run `install.sh`. A 502 on `/to/...`
+  means nginx is configured but the bridge is not running.
+* **It connects and then stops.** `docker compose logs wsbridge` names each
+  destination once. A `404` for a port means the port is not on its list, which
+  usually means `M2_CHANNELS` was raised without restarting the bridge.
 
 ### Players log in, then hang on "connecting to the server"
 
@@ -551,7 +659,8 @@ Everything below is background. You do not need it to run a server.
 
 ## What the services are
 
-Three that run, and one that does not.
+Three that run, and three that do not: `client-builder`, `updater` and
+`wsbridge` are each in a compose profile and are started only on purpose.
 
 ```
                     internet
@@ -698,6 +807,7 @@ startup and logs what it resolved to.
 | auth (login) | 11000 | **yes** |
 | channel 1 cores | 13000, 13001, 13002 | **yes** |
 | admin panel | 7788 | **yes** |
+| WebSocket bridge | 7789 | only when playing in the browser is switched on — and on 127.0.0.1 alone when the panel has a domain, because nginx reaches it there and serves it on 443 under `/to/` and `/ping` |
 | p2p between cores | 12000, 14000–14002 | no |
 | db core | 15000 | no — loopback inside the container only |
 | MariaDB | 3306 | no — compose network only |

@@ -4,9 +4,10 @@
 # Config: /usr/local/etc/m2panel.conf  (M2PANEL_CONF to move it)
 # =============================================================
 import datetime, json, os, random, re, socket, sys, threading, time, hashlib, hmac, secrets, sqlite3, subprocess
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 from functools import wraps
 from flask import Flask, request, session, redirect, url_for, render_template_string, flash, send_file, jsonify
+from flask import send_from_directory
 from flask import has_request_context
 from flask.sessions import SecureCookieSessionInterface
 # markupsafe is Jinja2's own escaping library and therefore already installed
@@ -498,12 +499,16 @@ PASSPHRASE_MIN = 8
 ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash",
             "bind", "port", "brand", "client_url", "client_name",
             "inventory_slots", "max_item_count", "max_level", "status_ports", "local_only",
-            "contact_email", "update_check", "update_apply", "update_command")
+            "contact_email", "update_check", "update_apply", "update_command",
+            # The client that runs in a browser. Environment only in practice:
+            # m2panel.conf is written once at first run and never again, so a
+            # setting added later can only reach an existing install this way.
+            "browser_play", "browser_dir", "bridge_port", "bridge_host")
 
 # The settings that are a yes or a no. Written out rather than guessed from the
 # value, so that "0" means off everywhere instead of meaning off in some places
 # and "a non-empty string, therefore on" in others.
-BOOL_CONF = ("local_only", "update_check", "update_apply")
+BOOL_CONF = ("local_only", "update_check", "update_apply", "browser_play")
 
 def _conf_from_env():
     """The config keys the environment sets, already turned into the right type."""
@@ -512,7 +517,7 @@ def _conf_from_env():
         raw = os.environ.get("M2PANEL_" + key.upper(), "").strip()
         if not raw:
             continue
-        if key in ("port", "inventory_slots", "max_item_count", "max_level"):
+        if key in ("port", "inventory_slots", "max_item_count", "max_level", "bridge_port"):
             try:
                 out[key] = int(raw)
             except ValueError:
@@ -670,6 +675,129 @@ def _clean_client_url(u):
     return ""
 
 CLIENT_URL = _clean_client_url(CONF.get("client_url", ""))
+
+# =============================================================================
+#  The client that runs in a browser.
+#
+#  Three things have to be true before the panel offers it, and it checks all
+#  three rather than assuming any of them:
+#
+#    1. the operator switched it on           M2PANEL_BROWSER_PLAY=1
+#    2. a browser client is actually here     browser/index.html on the volume
+#    3. the bridge answers                    it is in a compose profile and is
+#                                             not started by `up -d'
+#
+#  With any of them missing the panel shows nothing, serves nothing under /play
+#  and contacts nothing. A server that has never heard of this is unaffected.
+#
+#  The browser client is not in this repository and never will be: it is built
+#  from game data that is not ours to redistribute, the same reason client.zip
+#  is not here either. It is placed on the panel's data volume by hand.
+# =============================================================================
+BROWSER_PLAY = bool(CONF.get("browser_play", False))
+BROWSER_DIR  = _env_path("M2PANEL_BROWSER_DIR",
+                         str(CONF.get("browser_dir", "") or os.path.join(PANEL_DIR, "browser")))
+
+# Where the page is told to dial.
+#
+# NOT a path on this origin, and that is the client's decision rather than a
+# preference: it reads the address out of its own URL with
+# /[?&]serverHost=([A-Za-z0-9.\-]+)/, a character class that excludes "/" on
+# purpose (mainPosix.cpp says so in as many words), so the bridge can only ever
+# be named as host:port. Behind TLS that means port 443 with nginx routing /to/
+# and /ping through to it -- the same origin as this page, which is why nothing
+# extra has to be opened or certified. Without TLS it is the bridge's own port.
+try:
+    BRIDGE_PORT = int(CONF.get("bridge_port", 7789))
+except (TypeError, ValueError):
+    BRIDGE_PORT = 7789
+# Where the PANEL asks the bridge what it will connect to. Inside the compose
+# network, and nothing to do with what the browser is told.
+BRIDGE_HOST = str(CONF.get("bridge_host", "wsbridge") or "wsbridge")
+
+_BRIDGE_CACHE = {"at": 0.0, "ports": None}
+_BRIDGE_LOCK  = threading.Lock()
+
+def browser_client_ready():
+    """Is there a browser client on the volume to serve?"""
+    if not BROWSER_PLAY:
+        return False
+    try:
+        return os.path.isfile(os.path.join(BROWSER_DIR, "index.html"))
+    except OSError:
+        return False
+
+def bridge_ports():
+    """The ports the bridge will connect to, or None when it is not running.
+
+    Asked of the bridge itself rather than worked out here: it is the only
+    place that knows, and two copies of that arithmetic would eventually
+    disagree about a server with more than one channel. It doubles as the
+    "is it up" check -- the button is not offered when this is None.
+    """
+    now = time.time()
+    with _BRIDGE_LOCK:
+        if now - _BRIDGE_CACHE["at"] < 30:
+            return _BRIDGE_CACHE["ports"]
+    ports = None
+    try:
+        url = "http://%s:7789/ports" % BRIDGE_HOST
+        with urllib.request.urlopen(url, timeout=3) as r:
+            data = json.loads(r.read(8192).decode("utf-8", "replace"))
+        raw = data.get("ports") or []
+        if isinstance(raw, list):
+            ports = [int(p) for p in raw if isinstance(p, int) or str(p).isdigit()]
+    except Exception:
+        # Not running, or not reachable. Both mean the same thing to the page:
+        # there is nothing to connect through, so do not offer to.
+        ports = None
+    with _BRIDGE_LOCK:
+        _BRIDGE_CACHE["at"] = now
+        _BRIDGE_CACHE["ports"] = ports
+    return ports
+
+def browser_play_ready():
+    """All three conditions for offering the button, and it is three on purpose.
+
+    A client on the volume with no bridge running is a button that leads to a
+    page which asks the player for a proxy address -- which they cannot know
+    and should never be asked for. So the bridge is probed too, and the answer
+    is cached for 30 seconds like every other live check on the front page.
+    """
+    return browser_client_ready() and bridge_ports() is not None
+
+def bridge_endpoint():
+    """(host, port, tls) for THIS request -- what the page must be told.
+
+    Behind the proxy the bridge is reached on the panel's own address and port,
+    because nginx routes /to/ and /ping to it: same origin, same certificate,
+    nothing extra opened. Without a proxy it is this machine on the bridge's
+    own port, and the page is plain HTTP anyway.
+    """
+    host = request.host.split(":")[0]
+    if request.environ.get("panel.via_proxy"):
+        # The port the visitor actually reached, which is the one their browser
+        # will dial again -- not the panel's internal one.
+        if ":" in request.host:
+            port = int(request.host.rsplit(":", 1)[1])
+        else:
+            port = 443 if request.is_secure else 80
+        return host, port, request.is_secure
+    return host, BRIDGE_PORT, False
+
+def play_url():
+    """The link behind the button: the page, told where the bridge is.
+
+    ?serverHost / ?serverPort / ?serverTLS are the client's own parameters. With
+    them present the page skips its connection dialog entirely and boots
+    straight into the game (shell.html), which is what a player arriving from
+    this panel should get -- they have already chosen a server by being here.
+    """
+    host, port, tls = bridge_endpoint()
+    url = "/play/?serverHost=%s&serverPort=%d" % (urllib.parse.quote(host, safe=""), port)
+    if tls:
+        url += "&serverTLS=1"
+    return url
 
 # =============================================================================
 #  Which version this is, and whether a newer one has been published.
@@ -1208,6 +1336,15 @@ T = {
  "dl_sha":       {"en":"With this fingerprint you can verify the download arrived intact — compare it with what your checksum tool says.",
                   "de":"Mit diesem Fingerabdruck kannst du prüfen, ob der Download heil angekommen ist — vergleiche ihn mit dem, was dein Prüfsummen-Tool sagt.",
                   "tr":"Bu parmak iziyle indirmenin sağlam geldiğini doğrulayabilirsin — sağlama aracının söylediğiyle karşılaştır."},
+ # --- the client that runs in a browser ---
+ "play_title":   {"en":"Play right here","de":"Direkt hier spielen","tr":"Hemen burada oyna"},
+ "play_hint":    {"en":"No download and no installation — the game runs in this browser tab. It needs a recent browser, and the first start takes a few minutes while it loads.",
+                  "de":"Kein Download, keine Installation — das Spiel läuft in diesem Browser-Tab. Es braucht einen aktuellen Browser, und der erste Start dauert ein paar Minuten, während es lädt.",
+                  "tr":"İndirme yok, kurulum yok — oyun bu tarayıcı sekmesinde çalışır. Güncel bir tarayıcı ister ve ilk açılış, yüklenirken birkaç dakika sürer."},
+ "play_btn":     {"en":"🎮 Play in the browser","de":"🎮 Im Browser spielen","tr":"🎮 Tarayıcıda oyna"},
+ "tip_play":     {"en":"Opens the game in this tab. It is the same server as the downloaded game and the same account — a character made in one is there in the other. The downloaded game runs better; this one needs nothing installed.",
+                  "de":"Öffnet das Spiel in diesem Tab. Es ist derselbe Server wie beim heruntergeladenen Spiel und dasselbe Konto — ein Charakter aus dem einen ist auch im anderen da. Das heruntergeladene Spiel läuft flüssiger; dieses hier braucht keine Installation.",
+                  "tr":"Oyunu bu sekmede açar. İndirilen oyunla aynı sunucu ve aynı hesap — birinde yaptığın karakter diğerinde de vardır. İndirilen oyun daha akıcı çalışır; bu ise hiçbir kurulum istemez."},
  # --- registration polish ---
  "reg_title":    {"en":"Create your game account","de":"Spiel-Konto erstellen","tr":"Oyun hesabı oluştur"},
  "reg_hint":     {"en":"This is the account you'll use to log into the game itself.","de":"Mit diesem Konto meldest du dich im Spiel selbst an.","tr":"Oyuna bu hesapla giriş yapacaksın."},
@@ -2462,6 +2599,17 @@ setInterval(function(){
 <p>{{t('about_oss')}}</p>
 {% if contact %}<p>{{t('about_contact')}} <a href="mailto:{{contact}}">{{contact}}</a>.</p>{% endif %}
 </div>
+{% if browser_ready %}
+{# Shown only when a browser client is really on the volume and switched on.
+   It goes above the download because it is the shorter road for somebody who
+   just wants to look: nothing to fetch and nothing to install. #}
+<div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
+<div style="font-size:40px">🌐</div>
+<h3>{{t('play_title')}}</h3>
+<p class="muted">{{t('play_hint')}}</p>
+<a class="btn big" href="{{play_url}}" title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+</div>
+{% endif %}
 {% if local_only %}
 {# A local server plays on the machine it runs on, so there is nothing to
    fetch over the network. Point at the Desktop shortcut instead of at a
@@ -3317,7 +3465,9 @@ def login():
         cnt, lock = FAILS.get(ip, [0, 0])
         if time.time() < lock:
             flash("Too many wrong attempts. Please wait 15 minutes for security. ⏳", "error")
-            return render_template_string(TPL_LOGIN, client_ready=os.path.exists(CLIENT_ZIP), client_name=CLIENT_LABEL, client_url=CLIENT_URL)
+            return render_template_string(TPL_LOGIN, client_ready=os.path.exists(CLIENT_ZIP), client_name=CLIENT_LABEL,
+                                  client_url=CLIENT_URL, browser_ready=browser_play_ready(),
+                                  play_url=play_url())
         if check_pass(request.form.get("pw", "")):
             FAILS.pop(ip, None)
             session["auth"] = True
@@ -3326,7 +3476,9 @@ def login():
         FAILS[ip] = [cnt, time.time() + LOCK_SEC if cnt >= MAX_FAIL else 0]
         time.sleep(1.5)
         flash("Wrong passphrase, try again. 🙂", "error")
-    return render_template_string(TPL_LOGIN, client_ready=os.path.exists(CLIENT_ZIP), client_name=CLIENT_LABEL, client_url=CLIENT_URL)
+    return render_template_string(TPL_LOGIN, client_ready=os.path.exists(CLIENT_ZIP), client_name=CLIENT_LABEL,
+                                  client_url=CLIENT_URL, browser_ready=browser_play_ready(),
+                                  play_url=play_url())
 
 def _dl_quota_take(ip):
     """Spend one download slot, against two ceilings, both over a rolling 24h.
@@ -3504,6 +3656,95 @@ def download():
         resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % CLIENT_FILE
         return resp
     return send_file(CLIENT_ZIP, as_attachment=True, download_name=CLIENT_FILE, conditional=True)
+
+# ---------------- The client that runs in a browser ----------------
+# Serving it is the panel's job for one reason: same origin. The page, its
+# WebAssembly and -- behind nginx -- the bridge then sit under one address, one
+# certificate and one port, so nothing has to be opened, allowed or certified a
+# second time, and a page served over HTTPS can open the wss:// connection it
+# is obliged to use.
+#
+# It is ~1.7 GB in 421 files: index.html, index.js, a 14.7 MB index.wasm, a
+# 3.1 MB manifest.bin and 408 content-addressed blobs of about 4 MB each. That
+# is far too much to push through this process -- see the nginx location block
+# install.sh writes, which serves the same directory directly and leaves this
+# route as the fallback for an install with no proxy in front.
+
+def _play_dir_file(rel):
+    """An absolute path inside BROWSER_DIR, or None if it escapes it."""
+    root = os.path.realpath(BROWSER_DIR)
+    full = os.path.realpath(os.path.join(root, rel))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    return full
+
+def _play_headers(resp, cache):
+    """The three caching rules the client's own static server documents.
+
+    Taken from dist/browser/serve-webfs.py rather than invented, because they
+    are not a preference -- getting them wrong is not slow, it is broken:
+
+      <hash>.bin   immutable, a year. The name IS the hash of the contents, so
+                   the URL can never mean anything else and a second visit is
+                   zero network for everything that did not change.
+      manifest.bin no-store. It is the mutable root; a cached one makes a
+                   patched client load the previous corpus, which presents as
+                   missing files rather than as a stale cache.
+      index.*      no-cache -- "ask first", so an unchanged build is a 304
+                   rather than a 14 MB download.
+
+    Cross-origin isolation headers are deliberately NOT set. They would be
+    required for SharedArrayBuffer, and this build has none: the string does
+    not occur in index.js or index.wasm, and its pre.js disables JSPI on
+    purpose. Sending them anyway would only risk breaking the gate's
+    cross-origin probe of the bridge.
+    """
+    resp.headers["Cache-Control"] = cache
+    # The gate fetches /ping from the bridge, which is a different origin when
+    # the panel has no certificate. This costs nothing here -- everything under
+    # /play is public anyway, and it is what their own server sends.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+def _play_cache_for(name):
+    base = name.rsplit("/", 1)[-1]
+    if base in ("manifest.bin", "index.dev"):
+        return "no-store"
+    if base.endswith(".bin"):
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
+
+@app.route("/play")
+def play_redirect():
+    # To /play/ with the slash: every asset the page asks for is relative, so
+    # without it the browser resolves them against / and the client fetches 408
+    # blobs from the panel's root. A redirect rather than serving here.
+    return redirect(play_url() if browser_client_ready() else url_for("login"))
+
+@app.route("/play/")
+def play():
+    if not browser_client_ready():
+        flash("Playing in the browser is not set up on this server.", "error")
+        return redirect(url_for("login"))
+    resp = send_from_directory(BROWSER_DIR, "index.html")
+    return _play_headers(resp, "no-cache")
+
+@app.route("/play/<path:sub>")
+def play_asset(sub):
+    if not browser_client_ready():
+        return ("not found", 404)
+    if _play_dir_file(sub) is None:
+        return ("not found", 404)
+    try:
+        resp = send_from_directory(BROWSER_DIR, sub, conditional=True)
+    except Exception:
+        return ("not found", 404)
+    # Flask guesses .wasm correctly on a modern mimetypes database and not on
+    # every one; a wrong type here means the browser refuses to stream-compile
+    # it, which looks like a broken client rather than a missing header.
+    if sub.endswith(".wasm"):
+        resp.headers["Content-Type"] = "application/wasm"
+    return _play_headers(resp, _play_cache_for(sub))
 
 # ---------------- Player registration & account ----------------
 @app.route("/register", methods=["GET", "POST"])
