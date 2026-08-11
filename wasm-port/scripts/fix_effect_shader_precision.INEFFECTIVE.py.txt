@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+fix_effect_shader_precision.py -- idempotent.
+
+BUG
+---
+Additive glow effects look wrong in the browser and right on Linux, from the
+same code: the hit flash (blow_1_low.mse, four particle systems, all blending
+SRCALPHA/ONE) and the +9 weapon glitter.
+
+MEASURED AT THE ARTEFACT, both build trees, byte-identical 4375-byte blobs:
+
+    build/src/EngineLib/src/bgfx/shaders/essl/fs_effect.sc.bin.h
+    build-wasm-gfx/src/EngineLib/src/bgfx/shaders/essl/fs_effect.sc.bin.h
+
+        varying highp vec2 v_texcoord0;
+        uniform highp vec4 u_texFactor;
+        uniform highp vec4 u_effectOp;
+        void main ()
+          lowp float a_1;         <- alpha accumulator
+          lowp vec3  c_2;         <- colour accumulator
+          lowp vec4  tmpvar_3;    <- the sampled texel
+
+The uniforms are highp and the whole cascade is lowp. The SPIR-V variant that
+Vulkan runs carries no precision qualifiers at all: 32-bit float throughout.
+Same source, same render states, DIFFERENT ARITHMETIC.
+
+WHERE THE lowp COMES FROM
+-------------------------
+Nothing in this file asks for it. `_bgfx_profiles` (src/EngineLib/src/bgfx/
+CMakeLists.txt:53) lists `100_es`, so shaderc runs the GLSL optimizer as
+kGlslTargetOpenGLES20 (shaderc_glsl.cpp:31, `_version >= 300 ? ...ES30 :
+...ES20`), and in ESSL 1.00 `sampler2D` has a DEFAULT PRECISION OF lowp
+(GLSL ES 1.00 spec 4.5.3). texture2D() therefore returns lowp and the
+optimizer propagates that through every local it feeds.
+
+WHY IT LANDS ON GLOWS AND NOTHING ELSE
+--------------------------------------
+`lowp float` is only guaranteed as range -2..+2 with relative precision 2^-8.
+
+  * MODULATE4X computes a1*a2*4.0 -- up to 4.0, DOUBLE the guaranteed lowp
+    range, and it is truncated before the shader's own clamp(c,0,1) runs.
+    MODULATE2X, ADD and ADDSIGNED2X sit exactly at the 2.0 ceiling.
+  * Additive blending accumulates the ~1/256 quantisation across many
+    overlapping particles, which is what turns an invisible per-quad rounding
+    error into visible banding and colour shift. An opaque single quad hides
+    the identical error completely.
+
+FIX -- AND IT IS THE SYMPTOM, NOT THE CAUSE
+-------------------------------------------
+Force the default precision for this program only, on the ESSL path only.
+BGFX_SHADER_LANGUAGE_ESSL is shaderc's own per-language define
+(shaderc.cpp:1324/1352), so desktop GLSL 1.20 -- where `precision` statements
+are a parse error before GLSL 1.30 -- never sees these lines.
+
+>>> THE ROOT CAUSE IS DELIBERATELY LEFT STANDING, AND THIS IS THE NOTE THAT
+>>> SAYS SO. <<< The build targets ESSL 1.00 while the runtime creates a WebGL2
+context (BgfxEngine.cpp:321 `attrs.majorVersion = 2`, and
+src/UserInterface/CMakeLists.txt:655-656 `-sMIN/MAX_WEBGL_VERSION=2`) -- one
+shader generation lower than the runtime can execute. EVERY OTHER SHADER IN
+THIS BACKEND HAS THE SAME lowp PROPERTY; it simply does not show, because
+nothing else stacks additively. Adding `300_es` to `_bgfx_profiles` fixes all of
+them at once and makes this file's guard redundant -- delete it then. It was not
+done in the same pass because it touches every program in the backend while a
+user is playing in the browser, where a failure costs the whole picture rather
+than one effect.
+"""
+
+import io
+import os
+import sys
+
+SC = "/opt/m2wasm/src/EngineLib/src/bgfx/shaders/fs_effect.sc"
+MARKER = "#if BGFX_SHADER_LANGUAGE_ESSL"
+
+OLD = (
+    "#include <bgfx_shader.sh>\n"
+    "\n"
+    "SAMPLER2D(s_texColor, 0);\n"
+)
+
+NEW = (
+    "#include <bgfx_shader.sh>\n"
+    "\n"
+    "// ── THE ESSL PRECISION FLOOR, AND IT IS A SYMPTOM FIX WITH THE CAUSE LEFT STANDING ──\n"
+    "//\n"
+    "// MEASURED in the generated blob (essl/fs_effect.sc.bin.h, identical in the linux and\n"
+    "// wasm build trees): the uniforms come out `highp` and the whole cascade comes out\n"
+    "// `lowp` — `lowp vec4 tmpvar_3` for the texel, `lowp vec3 c_2` for the colour, `lowp\n"
+    "// float a_1` for the alpha. The SPIR-V variant Vulkan runs has no precision qualifiers\n"
+    "// at all. Same source, same render states, different arithmetic — which is exactly the\n"
+    "// reported shape: the hit flash and the +9 glitter are right on Linux and wrong in the\n"
+    "// browser.\n"
+    "//\n"
+    "// NOTHING HERE ASKED FOR lowp. `_bgfx_profiles` (src/EngineLib/src/bgfx/CMakeLists.txt:53)\n"
+    "// lists `100_es`, so shaderc runs the optimizer as kGlslTargetOpenGLES20\n"
+    "// (shaderc_glsl.cpp:31), and ESSL 1.00 gives `sampler2D` a DEFAULT PRECISION OF lowp\n"
+    "// (GLSL ES 1.00 §4.5.3). texture2D() returns lowp and the optimizer propagates it.\n"
+    "//\n"
+    "// `lowp float` is guaranteed only over -2..+2 at 2^-8. MODULATE4X (`a1*a2*4.0`) is\n"
+    "// DOUBLE that range and is truncated before this shader's own clamp() ever runs;\n"
+    "// MODULATE2X, ADD and ADDSIGNED2X sit on the 2.0 ceiling. Under the SRCALPHA/ONE blend\n"
+    "// every effect in this class uses, the 1/256 rounding accumulates across overlapping\n"
+    "// particles into visible banding. On an opaque single quad the same error is invisible,\n"
+    "// which is why only the additive effects were ever reported.\n"
+    "//\n"
+    "// >>> THE ROOT CAUSE IS STILL THERE AND THAT IS DELIBERATE. <<<\n"
+    "// The build targets ESSL 1.00 while the runtime creates a WebGL2 context\n"
+    "// (BgfxEngine.cpp:321 `attrs.majorVersion = 2`; src/UserInterface/CMakeLists.txt:655-656\n"
+    "// `-sMIN/MAX_WEBGL_VERSION=2`) — one shader generation below what the runtime can run.\n"
+    "// EVERY OTHER SHADER IN THIS BACKEND HAS THE SAME lowp PROPERTY. It does not show there\n"
+    "// only because nothing else stacks additively. Putting `300_es` in `_bgfx_profiles`\n"
+    "// fixes all of them at once — and makes this block redundant, so DELETE IT THEN. It was\n"
+    "// kept out of this pass because it touches every program in the backend while someone is\n"
+    "// playing in the browser, where a failure costs the whole picture instead of one effect.\n"
+    "//\n"
+    "// BGFX_SHADER_LANGUAGE_ESSL is shaderc's own per-language define (shaderc.cpp:1324 and\n"
+    "// :1352), so desktop GLSL never sees these statements — `precision` is a parse error\n"
+    "// before GLSL 1.30 and the `120` profile is in the same list.\n"
+    "//\n"
+    "// The GL_FRAGMENT_PRECISION_HIGH guard is ESSL 1.00's own: highp in a fragment shader is\n"
+    "// OPTIONAL in that language, and declaring it where it is unsupported is a compile\n"
+    "// error, not a downgrade. WebGL2 always has it; the fallback costs nothing and keeps the\n"
+    "// blob valid if this profile is ever pointed at real GLES2 hardware.\n"
+    "#if BGFX_SHADER_LANGUAGE_ESSL\n"
+    "#  ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
+    "precision highp sampler2D;\n"
+    "#  else\n"
+    "precision mediump float;\n"
+    "precision mediump sampler2D;\n"
+    "#  endif\n"
+    "#endif\n"
+    "\n"
+    "SAMPLER2D(s_texColor, 0);\n"
+)
+
+
+def main():
+    if not os.path.isfile(SC):
+        print("FAIL missing %s" % SC)
+        return 1
+    with io.open(SC, "r", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        text = f.read()
+
+    if MARKER in text:
+        print("[ok  ] already patched")
+        return 0
+
+    n = text.count(OLD)
+    if n != 1:
+        print("FAIL anchor found %d times (expected 1)" % n)
+        return 1
+
+    with io.open(SC, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text.replace(OLD, NEW, 1))
+    print("[edit] fs_effect.sc: ESSL precision floor added")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

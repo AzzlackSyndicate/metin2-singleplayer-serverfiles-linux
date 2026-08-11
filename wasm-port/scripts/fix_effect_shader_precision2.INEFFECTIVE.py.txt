@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+fix_effect_shader_precision2.py -- idempotent. Corrects fix_effect_shader_precision.py.
+
+MY OWN BUG, CAUGHT BEFORE IT REACHED THE BLOB.
+
+The first patch wrapped the precision statements in ESSL 1.00's defensive idiom:
+
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #else
+    precision mediump float;
+    #endif
+
+That idiom is correct for a shader compiled BY THE DRIVER, where
+GL_FRAGMENT_PRECISION_HIGH is defined by the GL implementation. It is WRONG
+here, because bgfx's shaderc runs its own preprocessor (fcpp) over the .sc
+source first, and shaderc.cpp:1313-1330 predefines only the BX_PLATFORM_* and
+BGFX_SHADER_LANGUAGE_* names -- GL_FRAGMENT_PRECISION_HIGH is not among them.
+fcpp therefore evaluates the #ifdef as FALSE at BUILD time and bakes the
+`mediump` arm into the blob. The runtime never sees the choice.
+
+mediump would very likely have hidden the symptom (range +-2^14 at 2^-10
+against lowp's +-2 at 2^-8), which is exactly what makes the mistake worth
+catching: it would have looked like the fix worked while shipping the wrong
+qualifier and a comment that misdescribes it.
+
+highp is unconditional here, and that is a fact about this build rather than an
+assumption: the browser target is WebGL2 only -- src/UserInterface/
+CMakeLists.txt:655-656 pins -sMIN_WEBGL_VERSION=2 and BgfxEngine.cpp:321 asks
+for majorVersion 2 -- and every WebGL2 implementation is GLES3-class hardware
+where highp in a fragment shader is mandatory, not optional. The `essl` blob has
+no other consumer in this tree.
+"""
+
+import io
+import os
+import sys
+
+SC = "/opt/m2wasm/src/EngineLib/src/bgfx/shaders/fs_effect.sc"
+MARKER = "// fcpp resolves #ifdef at BUILD time"
+
+OLD = (
+    "#if BGFX_SHADER_LANGUAGE_ESSL\n"
+    "#  ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
+    "precision highp sampler2D;\n"
+    "#  else\n"
+    "precision mediump float;\n"
+    "precision mediump sampler2D;\n"
+    "#  endif\n"
+    "#endif\n"
+)
+
+NEW = (
+    "// UNCONDITIONAL, AND NOT THE TEXTBOOK ESSL IDIOM — ON PURPOSE.\n"
+    "//\n"
+    "// The usual defensive form wraps this in `#ifdef GL_FRAGMENT_PRECISION_HIGH`, because\n"
+    "// highp in a fragment shader is optional in ESSL 1.00. That form is right for a shader\n"
+    "// the DRIVER compiles and wrong here: bgfx's shaderc preprocesses the .sc with fcpp\n"
+    "// first, and shaderc.cpp:1313-1330 predefines only BX_PLATFORM_* and\n"
+    "// BGFX_SHADER_LANGUAGE_* — GL_FRAGMENT_PRECISION_HIGH is not among them.\n"
+    "// fcpp resolves #ifdef at BUILD time, so the guard would bake the `mediump` arm into\n"
+    "// the blob and the runtime would never see the choice. mediump would probably have\n"
+    "// hidden the symptom too, which is what makes that mistake worth avoiding: it looks\n"
+    "// like a working fix while shipping a qualifier nobody chose.\n"
+    "//\n"
+    "// highp is safe unconditionally because this blob has exactly one consumer and that\n"
+    "// consumer is WebGL2: src/UserInterface/CMakeLists.txt:655-656 pins\n"
+    "// -sMIN_WEBGL_VERSION=2 and BgfxEngine.cpp:321 requests majorVersion 2. Every WebGL2\n"
+    "// implementation is GLES3-class, where fragment highp is mandatory.\n"
+    "#if BGFX_SHADER_LANGUAGE_ESSL\n"
+    "precision highp float;\n"
+    "precision highp sampler2D;\n"
+    "#endif\n"
+)
+
+
+def main():
+    if not os.path.isfile(SC):
+        print("FAIL missing %s" % SC)
+        return 1
+    with io.open(SC, "r", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        text = f.read()
+
+    if MARKER in text:
+        print("[ok  ] already patched")
+        return 0
+
+    n = text.count(OLD)
+    if n != 1:
+        print("FAIL anchor found %d times (expected 1)" % n)
+        return 1
+
+    with io.open(SC, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text.replace(OLD, NEW, 1))
+    print("[edit] fs_effect.sc: precision made unconditional on the ESSL path")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

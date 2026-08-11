@@ -1,0 +1,516 @@
+diff --git a/src/EngineLib/src/shared/platform/CanvasInput.cpp b/src/EngineLib/src/shared/platform/CanvasInput.cpp
+index a0082795..a3d93e62 100644
+--- a/src/EngineLib/src/shared/platform/CanvasInput.cpp
++++ b/src/EngineLib/src/shared/platform/CanvasInput.cpp
+@@ -271,10 +271,82 @@ struct CanvasInputAccess
+         self->m_mouseX = x;
+         self->m_mouseY = y;
+     }
++    static int  MouseX(CanvasInput* self) { return self->m_mouseX; }
++    static int  MouseY(CanvasInput* self) { return self->m_mouseY; }
++
++    static bool& PointerLocked(CanvasInput* self) { return self->m_pointerLocked; }
++    static bool& LockWanted(CanvasInput* self)    { return self->m_lockWanted; }
++    static bool& RightUpSynthesised(CanvasInput* self) { return self->m_rightUpSynthesised; }
++
++    // Seeded from the UI position, which is what CCamera::BeginDrag anchored on
++    // (PythonPlayerInputMouse.cpp:57 takes CWindowManager's mouse position, and that is fed
++    // from m_mouseX/m_mouseY). The two therefore agree by construction and the first delta
++    // of a drag is measured from where the drag actually began.
++    static void SeedLockOrigin(CanvasInput* self)
++    {
++        self->m_lockX = self->m_mouseX;
++        self->m_lockY = self->m_mouseY;
++    }
++
++    static void AdvanceLock(CanvasInput* self, int dx, int dy, int& outX, int& outY)
++    {
++        self->m_lockX += dx;
++        self->m_lockY += dy;
++        outX = self->m_lockX;
++        outY = self->m_lockY;
++    }
+ };
+ 
+ void CanvasInput::Push(CanvasEventKind kind, int a, int b)
+ {
++    // ═══════════════════════════════════════════════════════════════════════════════
++    // >>> M2_COALESCE_MOUSEMOVE: A RUN OF MOUSEMOVES COLLAPSES TO ITS LAST POSITION. <<<
++    // ═══════════════════════════════════════════════════════════════════════════════
++    //
++    // WHY, AND IT IS THE CAMERA, NOT THE UI. The queue is drained once per frame and every
++    // queued move is delivered, so a frame that saw N moves calls CPythonApplication::
++    // OnMouseMove N times. That is harmless for the UI — the last position wins — but it is
++    // NOT harmless for the camera drag, because BgfxCamera::Drag RE-ANCHORS on every call
++    // (BgfxCamera.cpp:1221-1222). Each call therefore measures only the movement since the
++    // PREVIOUS event, and each one OVERWRITES angularVelocity rather than adding to it
++    // (BgfxCamera.cpp:1190-1191). The frame's Update() consequently rotates by the last
++    // inter-event delta alone and the other N-1 deltas are thrown away, so the camera turns
++    // roughly 1/N of the distance the mouse actually travelled.
++    //
++    // N is "browser mousemove rate divided by frame rate", so the SLOWER the renderer the
++    // WORSE it gets — which is why this reads as "the camera rotation is far too slow" on a
++    // software-rendered build and not on a fast one. It is a frame-rate coupling introduced
++    // by the queue, not by the sensitivity: m_fResistance is 0.3 here exactly as in the
++    // original (Camera.cpp:9).
++    //
++    // >>> THIS MAKES THE BROWSER MATCH THE OTHER TWO BACKENDS RATHER THAN INVENTING A
++    // RULE. <<< X11Input does not queue motion at all — it POLLS the pointer once per frame
++    // with XQueryPointer (X11Input.cpp:594) and reports one absolute position, so the
++    // desktop delta already covers the whole frame. Win32 coalesces WM_MOUSEMOVE in the
++    // message queue for the same reason. Delivering the final position once per frame is
++    // what both of them already do.
++    //
++    // ONLY AN ADJACENT RUN IS COLLAPSED, which is what keeps ordering intact: a move that
++    // precedes a button press is still queued before it, because the press breaks the run
++    // and the next move appends after it. Collapsing across a button event would move the
++    // pointer before a click and equip the wrong thing.
++    //
++    // Placed BEFORE the cap below deliberately — with this in place a stalled frame can no
++    // longer fill the queue with thousands of superseded moves, which is the exact case the
++    // cap's comment describes.
++    // M2_COALESCE_CAMERAMOVE: CameraMove folds by the same rule, and for the same reason
++    // it is SAFE to fold it — the value carried is an already-integrated virtual POSITION,
++    // not a delta, so the last one in a run carries every movement the earlier ones did.
++    // Folding a raw delta here would silently drop movement; that is why the integration
++    // happens in the listener and not at the drain.
++    if ((kind == CanvasEventKind::MouseMove || kind == CanvasEventKind::CameraMove) &&
++        !m_queue.empty() && m_queue.back().kind == kind)
++    {
++        m_queue.back().a = a;
++        m_queue.back().b = b;
++        return;
++    }
++
+     // A cap, because the queue is drained once per frame and a frame can stall — a long
+     // resource load with the pointer moving produces thousands of mousemoves that are all
+     // superseded by the last one. Dropping the OLDEST would reorder press/release pairs,
+@@ -387,6 +459,33 @@ EM_BOOL OnMouseMoveDom(int /*eventType*/, const EmscriptenMouseEvent* e, void* u
+ {
+     auto* self = Self(userData);
+ 
++    // ── M2_POINTERLOCK_MOVE: TWO CHANNELS, AND THEY MUST NOT BE MIXED ────────────────
++    //
++    // Under lock the pointer HAS no position — targetX/targetY are frozen at whatever they
++    // last were — and movementX/movementY are the only signal. They are CSS pixels like
++    // every other DOM coordinate, so they take the SAME scale factor: ScaleToBackingStore is
++    // a pure multiply with no origin term, which is why it is correct for a delta as well as
++    // for a position.
++    //
++    // m_mouseX/m_mouseY are deliberately NOT advanced here. That is the whole design: the UI
++    // keeps the position the drag started at, so the software cursor stays pinned exactly as
++    // the Win32 client's cursor warp pins it, while the camera gets an unclamped virtual
++    // position that can run past the canvas edge forever.
++    if (CanvasInputAccess::PointerLocked(self))
++    {
++        int dx = 0, dy = 0;
++        ScaleToBackingStore(CanvasWindow::CanvasSelector(),
++                            e->movementX, e->movementY, dx, dy);
++
++        if (dx == 0 && dy == 0)
++            return EM_FALSE;
++
++        int vx = 0, vy = 0;
++        CanvasInputAccess::AdvanceLock(self, dx, dy, vx, vy);
++        CanvasInputAccess::Push(self, CanvasEventKind::CameraMove, vx, vy);
++        return EM_FALSE;
++    }
++
+     int x = 0, y = 0;
+     ScaleToBackingStore(CanvasWindow::CanvasSelector(), e->targetX, e->targetY, x, y);
+ 
+@@ -395,6 +494,48 @@ EM_BOOL OnMouseMoveDom(int /*eventType*/, const EmscriptenMouseEvent* e, void* u
+     return EM_FALSE;
+ }
+ 
++// ── ENTERING AND LEAVING THE LOCK (M2_POINTERLOCK_ENTER) ────────────────────────────
++//
++// >>> THIS HAS TO LIVE IN A BUTTON HANDLER, AND THAT IS A SPEC CONSTRAINT, NOT A CHOICE.
++// <<< Pointer Lock may only be requested from a user gesture; a request issued from a frame
++// callback is rejected outright. So the camera code that wants the lock cannot ask for it —
++// the right-button mousedown that starts the drag is the only place that can.
++//
++// deferUntilInEventHandler is FALSE deliberately. Emscripten's defer mode re-tries a
++// rejected request on the NEXT event handler, which would arm a denied request to fire on
++// some later, unrelated click and grab the pointer when nobody asked. Fail now and say so.
++void RequestCameraPointerLock(CanvasInput* self)
++{
++    CanvasInputAccess::LockWanted(self) = true;
++
++    const EMSCRIPTEN_RESULT r =
++        emscripten_request_pointerlock(CanvasWindow::CanvasSelector(), EM_FALSE);
++
++    if (r != EMSCRIPTEN_RESULT_SUCCESS)
++    {
++        // Not fatal: without the lock the drag still works, it just saturates at the canvas
++        // edge the way it did before this existed. Warned once so a browser that refuses
++        // (an iframe without allow="pointer-lock", a user who dismissed the prompt) is
++        // visible in the log instead of being mistaken for a camera bug.
++        static bool s_warned = false;
++        if (!s_warned)
++        {
++            s_warned = true;
++            SPDLOG_WARN("CanvasInput: emscripten_request_pointerlock failed ({}). The camera "
++                        "drag falls back to canvas positions and will stop turning at the "
++                        "canvas edge. Warned once.", static_cast<int>(r));
++        }
++    }
++}
++
++void ReleaseCameraPointerLock(CanvasInput* self)
++{
++    // Cleared BEFORE the exit call: the pointerlockchange that follows must see that this
++    // release was ours, or it will synthesise a second RightUp on top of the real one.
++    CanvasInputAccess::LockWanted(self) = false;
++    emscripten_exit_pointerlock();
++}
++
+ EM_BOOL OnMouseDownDom(int /*eventType*/, const EmscriptenMouseEvent* e, void* userData)
+ {
+     auto* self = Self(userData);
+@@ -412,7 +553,12 @@ EM_BOOL OnMouseDownDom(int /*eventType*/, const EmscriptenMouseEvent* e, void* u
+         CanvasInputAccess::Push(self, CanvasEventKind::MiddleDown, x, y);
+         break;
+     case kButtonRight:
++        // M2_SYNTHETIC_RIGHTUP_ARM. A new press retires any unconsumed swallow: if the tab
++        // was hidden when the user let go, the paired mouseup never reached the canvas at
++        // all, and a stale flag would eat THIS press's release and wedge the button down.
++        CanvasInputAccess::RightUpSynthesised(self) = false;
+         CanvasInputAccess::Push(self, CanvasEventKind::RightDown, x, y);
++        RequestCameraPointerLock(self);
+         break;
+     default:
+         return EM_FALSE;
+@@ -438,7 +584,16 @@ EM_BOOL OnMouseUpDom(int /*eventType*/, const EmscriptenMouseEvent* e, void* use
+         CanvasInputAccess::Push(self, CanvasEventKind::MiddleUp, x, y);
+         break;
+     case kButtonRight:
++        // M2_SYNTHETIC_RIGHTUP_EAT. The release was already delivered when the lock died;
++        // this is the physical one catching up, and the client has moved on.
++        if (CanvasInputAccess::RightUpSynthesised(self))
++        {
++            CanvasInputAccess::RightUpSynthesised(self) = false;
++            ReleaseCameraPointerLock(self);
++            return EM_TRUE;
++        }
+         CanvasInputAccess::Push(self, CanvasEventKind::RightUp, x, y);
++        ReleaseCameraPointerLock(self);
+         break;
+     default:
+         return EM_FALSE;
+@@ -487,6 +642,53 @@ EM_BOOL OnWheelDom(int /*eventType*/, const EmscriptenWheelEvent* e, void* userD
+     return EM_TRUE;
+ }
+ 
++EM_BOOL OnPointerLockChangeDom(int /*eventType*/,
++                              const EmscriptenPointerlockChangeEvent* e,
++                              void* userData)
++{
++    // M2_POINTERLOCK_CHANGE.
++    auto* self = Self(userData);
++
++    // wasLocked, so a stray isActive=false (a request that was refused outright never
++    // locked anything) cannot invent a release for a drag that was never captured.
++    const bool wasLocked = CanvasInputAccess::PointerLocked(self);
++    const bool active    = (e->isActive != 0);
++    CanvasInputAccess::PointerLocked(self) = active;
++
++    if (active)
++    {
++        CanvasInputAccess::SeedLockOrigin(self);
++        return EM_FALSE;
++    }
++
++    // ── THE LOCK CAN END WITHOUT US, AND THE DRAG MUST NOT OUTLIVE IT ────────────────
++    //
++    // Escape, Alt-Tab, a tab switch and the browser's own timeout all exit Pointer Lock, and
++    // NONE of them delivers a mouseup. Without this the client goes on believing the right
++    // button is held: the camera stays in drag, the cursor stays hidden, and the next click
++    // is interpreted as part of a rotation that ended long ago. That is the "halber Zustand"
++    // this handler exists to make impossible.
++    //
++    // A synthetic RightUp at the PINNED position is exactly the event that never arrived,
++    // and it runs the ordinary release path — CPythonPlayer::NEW_SetMouseCameraState ->
++    // EndDrag, cursor restored — rather than a second, parallel teardown that would have to
++    // be kept in step with it.
++    //
++    // Guarded on m_lockWanted so the ordinary path does not double-deliver:
++    // ReleaseCameraPointerLock clears the flag BEFORE calling exit, so the change event it
++    // provokes falls straight through here.
++    if (wasLocked && CanvasInputAccess::LockWanted(self))   // M2_SYNTHETIC_RIGHTUP_SET
++    {
++        CanvasInputAccess::LockWanted(self)        = false;
++        CanvasInputAccess::RightUpSynthesised(self) = true;
++        CanvasInputAccess::Push(self, CanvasEventKind::RightUp,
++                                CanvasInputAccess::MouseX(self),
++                                CanvasInputAccess::MouseY(self));
++    }
++
++    return EM_FALSE;
++}
++
+ // ── SUPPRESSING THE BROWSER'S RIGHT-CLICK MENU, WHICH TAKES JS ──────────────────────
+ //
+ // The client uses the right button to rotate the camera, so a native context menu appears
+@@ -554,6 +756,13 @@ bool CanvasInput::Init(EngineLib::NativeWindowHandle /*hWnd*/)
+     emscripten_set_mouseup_callback    (canvas, this, false, &OnMouseUpDom);
+     emscripten_set_dblclick_callback   (canvas, this, false, &OnDblClickDom);
+     emscripten_set_wheel_callback      (canvas, this, false, &OnWheelDom);
++
++    // ON THE DOCUMENT, not the canvas: pointerlockchange is fired at the document by spec,
++    // and a listener on the element never sees it. The lock itself is still requested for
++    // the canvas — the target of the lock and the target of the notification are different
++    // nodes, which is the one thing about this API that reliably gets written wrong.
++    emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, false,
++                                              &OnPointerLockChangeDom);
+     InstallContextMenuSuppressor(canvas);
+ 
+     m_initialised = true;
+@@ -585,6 +794,17 @@ void CanvasInput::Shutdown()
+     emscripten_set_mouseup_callback    (canvas, nullptr, false, nullptr);
+     emscripten_set_dblclick_callback   (canvas, nullptr, false, nullptr);
+     emscripten_set_wheel_callback      (canvas, nullptr, false, nullptr);
++    emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr,
++                                              false, nullptr);
++
++    // M2_POINTERLOCK_SHUTDOWN. Leaving the browser locked after the client is gone strands
++    // the user with no cursor and no page to release it, so the lock is dropped explicitly
++    // rather than left to the document teardown.
++    if (m_pointerLocked)
++        emscripten_exit_pointerlock();
++    m_pointerLocked      = false;   // M2_SYNTHETIC_RIGHTUP_RESET
++    m_lockWanted         = false;
++    m_rightUpSynthesised = false;
+     RemoveContextMenuSuppressor(canvas);
+ 
+     m_queue.clear();
+@@ -611,6 +831,28 @@ void CanvasInput::Drain()
+     std::vector<CanvasEvent> events;
+     events.swap(m_queue);
+ 
++    // ── M2_WHEEL_SUM_PER_FRAME ───────────────────────────────────────────────────────
++    //
++    // ICamera::Wheel ASSIGNS angularVelocity.y (BgfxCamera.cpp:1151), so when one frame
++    // contains several notches every one but the last is discarded and a fast scroll zooms
++    // by a single notch. This is the same overwrite the camera drag suffered, on the other
++    // axis.
++    //
++    // Adjacent-run coalescing in Push would NOT fix it — one mousemove between two notches
++    // breaks the run and the halves overwrite each other again — so the frame's notches are
++    // summed here and delivered ONCE, at the position of the first. Zoom is a
++    // position-independent axis with no interaction with click ordering, so collapsing it
++    // across the whole batch cannot reorder anything that matters.
++    //
++    // Summing rather than `+=` at the camera, deliberately: angularVelocity.y still carries
++    // the DAMPED REMAINDER of previous frames (it is multiplied by 0.5 per Update, not
++    // cleared), and adding into it would compound the glide instead of replacing it.
++    int  wheelSum       = 0;
++    bool wheelDelivered = false;
++    for (const CanvasEvent& e : events)
++        if (e.kind == CanvasEventKind::Wheel)
++            wheelSum += e.a;
++
+     for (const CanvasEvent& e : events)
+     {
+         switch (e.kind)
+@@ -620,7 +862,19 @@ void CanvasInput::Drain()
+         case CanvasEventKind::Char:     m_callback->OnChar(static_cast<unsigned>(e.a)); break;
+ 
+         case CanvasEventKind::MouseMove: m_callback->OnMouseMove(e.a, e.b); break;
+-        case CanvasEventKind::Wheel:     m_callback->OnMouseWheel(e.a);     break;
++
++        // The camera's channel. e.a/e.b are the virtual, unclamped pointer position.
++        case CanvasEventKind::CameraMove:
++            m_callback->OnCameraPointerMove(e.a, e.b);
++            break;
++
++        case CanvasEventKind::Wheel:
++            if (!wheelDelivered)
++            {
++                wheelDelivered = true;
++                m_callback->OnMouseWheel(wheelSum);
++            }
++            break;
+ 
+         case CanvasEventKind::LeftDown:        m_callback->OnMouseLeftButtonDown(e.a, e.b); break;
+         case CanvasEventKind::LeftUp:          m_callback->OnMouseLeftButtonUp(e.a, e.b);   break;
+diff --git a/src/EngineLib/src/shared/platform/CanvasInput.h b/src/EngineLib/src/shared/platform/CanvasInput.h
+index 861e387c..ad3bc6c2 100644
+--- a/src/EngineLib/src/shared/platform/CanvasInput.h
++++ b/src/EngineLib/src/shared/platform/CanvasInput.h
+@@ -86,6 +86,7 @@ enum class CanvasEventKind : std::uint8_t
+ {
+     KeyDown, KeyUp, Char,
+     MouseMove, Wheel,
++    CameraMove,          // virtual pointer position while Pointer Lock is held
+     LeftDown, LeftUp, LeftDoubleClick,
+     RightDown, RightUp,
+     MiddleDown, MiddleUp,
+@@ -145,6 +146,28 @@ private:
+     int m_mouseX = 0;
+     int m_mouseY = 0;
+ 
++    // ── POINTER LOCK (M2_POINTERLOCK_STATE) ────────────────────────────────────
++    //
++    // m_lockWanted is INTENT and m_pointerLocked is FACT, and they are separate because the
++    // browser can drop the lock on its own (Escape, tab switch) without a mouseup. The
++    // difference between the two is precisely "the lock ended and the client does not know
++    // the drag is over" — see OnPointerLockChangeDom.
++    //
++    // m_lockX/m_lockY are the VIRTUAL pointer: unclamped, seeded from m_mouseX/m_mouseY when
++    // the lock activates, advanced by every movement delta. They never touch m_mouseX/m_mouseY,
++    // which stay frozen so the UI's cursor stays pinned for the length of the drag.
++    bool m_pointerLocked = false;
++    bool m_lockWanted    = false;
++
++    // M2_SYNTHETIC_RIGHTUP — set when a lost lock forced us to invent the right-button
++    // release the browser never sent. The REAL mouseup still arrives afterwards (the button
++    // is physically still down), and delivering both would run the release path twice: the
++    // second EndDrag answers "this was not a drag", which is the branch that picks a target
++    // and opens the character menu. So the next real right-release is swallowed exactly once.
++    bool m_rightUpSynthesised = false;
++    int  m_lockX = 0;
++    int  m_lockY = 0;
++
+     bool m_initialised = false;
+ 
+     IInputCallback* m_callback = nullptr;
+diff --git a/src/EngineLib/src/shared/platform/X11Input.cpp b/src/EngineLib/src/shared/platform/X11Input.cpp
+index 1d4bec5c..19cb4aab 100644
+--- a/src/EngineLib/src/shared/platform/X11Input.cpp
++++ b/src/EngineLib/src/shared/platform/X11Input.cpp
+@@ -553,6 +553,20 @@ void X11Input::PollMouse(EngineLib::NativeWindowHandle hWnd)
+     // mask) and ignored.
+     if (m_callback)
+     {
++        // ── M2_WHEEL_SUM_PER_FRAME ────────────────────────────────────────────────
++        //
++        // The loop below exists because "a fast scroll delivers several notches in one
++        // frame and every one of them must reach the camera". It did not: CCamera::Wheel
++        // ASSIGNS angularVelocity.y (Camera.cpp:115), so each notch OVERWROTE the one
++        // before it and a four-notch flick zoomed by one. The loop was right and its
++        // delivery was not.
++        //
++        // Summed here and handed over ONCE, rather than changed to `+=` at the camera:
++        // angularVelocity.y still carries the damped remainder of earlier frames (Update
++        // multiplies it by 0.5, it does not clear it), so adding into it would compound the
++        // glide instead of replacing it. Summing first keeps the camera's model untouched.
++        int wheelSum = 0;
++
+         XEvent ev;
+         while (XCheckWindowEvent(m_display, static_cast<Window>(m_window),
+                                  ButtonPressMask | ButtonReleaseMask, &ev))
+@@ -572,17 +586,23 @@ void X11Input::PollMouse(EngineLib::NativeWindowHandle hWnd)
+ 
+             if (ev.xbutton.button == Button4)
+             {
+-                m_callback->OnMouseWheel(kWheelDelta);
++                wheelSum += kWheelDelta;
+             }
+             else if (ev.xbutton.button == Button5)
+             {
+-                m_callback->OnMouseWheel(-kWheelDelta);
++                wheelSum -= kWheelDelta;
+             }
+             // Buttons 6/7 are horizontal scroll on most mice. The client has no horizontal
+             // wheel concept — IInputCallback has one OnMouseWheel and CCamera::Wheel is a
+             // single axis — so they are dropped rather than folded into the vertical axis,
+             // which would make a sideways nudge zoom the camera.
+         }
++
++        // Zero means no notch this frame — NOT "zoom by nothing". CCamera::Wheel would
++        // assign 0 to angularVelocity.y and kill the glide left over from the previous
++        // frame, so the call is skipped rather than made with 0.
++        if (wheelSum != 0)
++            m_callback->OnMouseWheel(wheelSum);
+     }
+ 
+     Window       rootReturn  = 0;
+diff --git a/src/PyLib/src/bindings/app/PythonApplication.h b/src/PyLib/src/bindings/app/PythonApplication.h
+index 96a6f168..0b124891 100644
+--- a/src/PyLib/src/bindings/app/PythonApplication.h
++++ b/src/PyLib/src/bindings/app/PythonApplication.h
+@@ -410,6 +410,9 @@ class CPythonApplication : public EngineLib::IInputCallback,
+ 
+ 		void OnMouseWheel(int nLen) override;
+ 		void OnMouseMove(int x, int y) override;
++		// M2_CAMERA_POINTER_CHANNEL_DECL — the browser's Pointer Lock channel. See
++		// IInput.h for why the camera needs a pointer position the UI must not see.
++		void OnCameraPointerMove(int virtualX, int virtualY) override;
+ 		void OnMouseMiddleButtonDown(int x, int y) override;
+ 		void OnMouseMiddleButtonUp(int x, int y) override;
+ 		void OnMouseLeftButtonDown(int x, int y) override;
+diff --git a/src/PyLib/src/bindings/app/PythonApplicationEvent.cpp b/src/PyLib/src/bindings/app/PythonApplicationEvent.cpp
+index 84af2368..d5910bac 100644
+--- a/src/PyLib/src/bindings/app/PythonApplicationEvent.cpp
++++ b/src/PyLib/src/bindings/app/PythonApplicationEvent.cpp
+@@ -125,6 +125,39 @@ void CPythonApplication::OnMouseMove(int x, int y)
+ 	rkWndMgr.RunMouseMove(x, y);
+ }
+ 
++// ═════════════════════════════════════════════════════════════════════════════════════
++// M2_CAMERA_POINTER_CHANNEL_IMPL — the drag half of OnMouseMove, for a pointer that has
++// no position.
++// ═════════════════════════════════════════════════════════════════════════════════════
++//
++// Delivered ONLY by CanvasInput and only while Pointer Lock is held; X11Input and EterInput
++// never call it and inherit the empty default. The argument is a VIRTUAL, UNCLAMPED pointer
++// position — lock-entry position plus every movement delta since — so it goes to Drag
++// unchanged and needs no arithmetic here.
++//
++// >>> AND THERE IS NO WARP, WHICH IS THE POINT RATHER THAN AN OMISSION. <<< OnMouseMove
++// above calls WarpCursorToClientPoint to pin the cursor; under lock there IS no cursor to
++// pin, and the browser arm of that function is a documented no-op
++// (PythonAppPlatformPosix.cpp:91-103). CanvasInput freezes the UI position for the duration
++// instead, which reaches the same end state the warp was built to produce.
++//
++// The UI is deliberately not run from here — no SetResolution, no RunMouseMove. The pointer
++// did not move as far as the UI is concerned, and telling it otherwise is exactly the
++// channel mixing this split exists to prevent.
++void CPythonApplication::OnCameraPointerMove(int virtualX, int virtualY)
++{
++	if (!EngineLib::Engine::Instance().GetScene().IsMapReady())
++		return;
++
++	auto& rkCam = EngineLib::Engine::Instance().GetCamera();
++
++	// Drag RE-ANCHORS to the position it is given (BgfxCamera.cpp:1221-1222), so consecutive
++	// calls yield exactly the movement between them. When no drag is in progress it
++	// re-anchors and answers false, which is the correct no-op.
++	int nDragX = 0, nDragY = 0;
++	rkCam.Drag(virtualX, virtualY, nDragX, nDragY);
++}
++
+ void CPythonApplication::OnMouseLeftButtonDown(int x, int y)
+ {
+ 	UI::CWindowManager& rkWndMgr=UI::CWindowManager::Instance();
+diff --git a/src/PyLib/src/windows/PythonWindow.cpp b/src/PyLib/src/windows/PythonWindow.cpp
+index cdbe5bd6..c6a2a02e 100644
+--- a/src/PyLib/src/windows/PythonWindow.cpp
++++ b/src/PyLib/src/windows/PythonWindow.cpp
+@@ -836,6 +836,25 @@ namespace UI
+ 		if (IsFlag(CWindow::FLAG_NOT_PICK))
+ 			return nullptr;
+ 
++		// ── ZERO_EXTENT_IS_AN_ANCHOR_NOT_A_PICK_SURFACE ─────────────
++		//
++		// IsIn tests both edges with <=, so a window whose width and height are 0 is not
++		// an empty rect -- it matches exactly ONE pixel. ui.py's Button.SetText makes one
++		// of those for every labelled button: a TextLine parented to the button, placed at
++		// the button's CENTRE, never sized. On that one pixel the loop above descended
++		// into the label and returned it, so the button got neither OnMouseOverIn nor
++		// OnMouseLeftButtonUp -- a dead pixel in the middle of every button, which is
++		// precisely where anything aiming at "the button" aims.
++		//
++		// Only for windows that HAVE a parent. __PickWindow compares a layer's result
++		// against the layer BY IDENTITY to decide whether anything was hit, so a layer
++		// must go on returning itself even when it carries no size of its own.
++		//
++		// FLAG_IGNORE_SIZE means "my rect does not describe me"; those keep their answer.
++		if (m_pParent && 0 == m_lWidth && 0 == m_lHeight &&
++		    !IsFlag(CWindow::FLAG_IGNORE_SIZE))
++			return nullptr;
++
+ 		return (this);
+ 	}
+ 
