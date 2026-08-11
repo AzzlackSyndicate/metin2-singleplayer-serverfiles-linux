@@ -1136,21 +1136,6 @@ fetch_stack() {
     say "Copying the build context into $INSTALL_DIR ..."
     mkdir -p "$INSTALL_DIR"
     (cd "$_ctx" && tar cf - .) | (cd "$INSTALL_DIR" && tar xf -)
-
-    # Two files the browser client's fetcher needs live OUTSIDE linux-port/docker
-    # -- fetch-web-client.sh one level up, artifacts.json at the top of the
-    # repository -- and the install directory is a copy of the docker folder
-    # alone. Mounting them from the compose file with ../ therefore pointed at
-    # nothing on a real install, and the fetcher started with empty directories
-    # where its script and its pointer file should have been. They are copied in
-    # so every path in docker-compose.yml stays inside this one directory.
-    for _extra in "$REPO_DIR/linux-port/fetch-web-client.sh" "$REPO_DIR/artifacts.json"; do
-        if [ -f "$_extra" ]; then
-            cp "$_extra" "$INSTALL_DIR/" 2>/dev/null || \
-                warn "Could not copy $(basename "$_extra") -- the browser client cannot be fetched."
-        fi
-    done
-
     good "Server files in place."
 }
 
@@ -1976,7 +1961,12 @@ _write_nginx_conf() {
     }
 
     location /play/ {
-        alias $_zip_dir/browser/;
+        # browser/current, not browser. current is a symlink to the version
+        # being served, and pointing at its parent would serve the directory
+        # that CONTAINS the versions -- every request a 404 while the files sit
+        # one level down. Swinging that symlink is how a new version goes live
+        # and how a rollback happens, so this path itself never changes.
+        alias $_zip_dir/browser/current/;
         index index.html;
         access_log off;
 
@@ -2733,11 +2723,47 @@ fetch_web_client() {
         return 0
     fi
 
+    # The fetcher's script and pointer file have to sit beside docker-compose.yml,
+    # because a bind mount can only name a path inside the directory compose was
+    # given. fetch_stack() copies them there -- but it has several paths that
+    # return before the copy, and an install that is already at the published
+    # version takes one of them. So make sure here, every run: this is also what
+    # repairs a server that updated while the copy was missing.
+    for _need in fetch-web-client.sh artifacts.json; do
+        [ -f "$INSTALL_DIR/$_need" ] && continue
+        _from=""
+        [ -f "$REPO_DIR/linux-port/$_need" ] && _from="$REPO_DIR/linux-port/$_need"
+        [ -f "$REPO_DIR/$_need" ]            && _from="$REPO_DIR/$_need"
+        if [ -z "$_from" ]; then
+            warn "$_need is missing and could not be found in the checkout."
+            warn "The browser client cannot be fetched."
+            WANT_WEB=0
+            return 0
+        fi
+        cp "$_from" "$INSTALL_DIR/$_need" || {
+            warn "Could not copy $_need into $INSTALL_DIR."
+            WANT_WEB=0
+            return 0
+        }
+        info "placed $_need beside docker-compose.yml"
+    done
+
     # Its own exit codes say what went wrong, so this can be specific rather than
     # "it failed". The install is NOT aborted: a server whose game runs is worth
     # having even when the browser client could not be fetched.
     if dc --profile webclient run --rm webclient-fetcher; then
-        good "Browser client installed."
+        # Trust the outcome, not the exit code. A run whose script was missing
+        # once reported success here while nothing arrived, and the installer
+        # then said "Browser client installed" to somebody who had none. Ask the
+        # volume instead -- it is the thing the panel will look at.
+        if dc run --rm --no-deps --entrypoint sh panel -c \
+             '[ -f /usr/local/m2panel/browser/current/index.html ]' >/dev/null 2>&1; then
+            good "Browser client installed."
+            return 0
+        fi
+        warn "The fetcher reported success but no client arrived on the volume."
+        warn "Look at:  cd $INSTALL_DIR && docker compose --profile webclient run --rm webclient-fetcher"
+        WANT_WEB=0
         return 0
     fi
     _rc=$?

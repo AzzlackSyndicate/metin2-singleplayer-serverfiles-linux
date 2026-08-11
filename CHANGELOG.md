@@ -50,12 +50,24 @@ every version here.
   checked, and only then is `current` moved — a rename, which either happens or
   does not. There is no instant at which a player is handed half an engine, and
   a rollback is one symlink.
-- The fetcher's script and `artifacts.json` are copied into the install
-  directory. They live one and two levels above `linux-port/docker` in a
-  checkout, and an install directory is a copy of that folder alone -- so
-  mounting them with `../` found nothing on a real server. Docker answers a
-  missing bind source by creating an empty directory, so the fetcher started
-  with a directory where its script should have been and did nothing, silently.
+- nginx serves `/play/` from `browser/current`, the symlink to the version being
+  served, rather than from its parent -- which held only the version
+  directories, so every request under `/play/` was a 404 while the files sat one
+  level down.
+- The fetcher mounts its script and `artifacts.json` from beside
+  `docker-compose.yml` rather than from above it. Those two live one and two
+  levels up in a checkout, and an install directory is a copy of that one
+  folder -- and Docker answers a missing bind source by creating an empty
+  directory, so the fetcher started with a directory where its script should
+  have been and did nothing, silently.
+- The fetcher's script and pointer file are placed beside `docker-compose.yml`
+  on every run, not only when the build context is restaged. A server already at
+  the published version skips restaging, so on those the two files never
+  arrived and the browser client could not be fetched.
+- The installer checks that a browser client actually arrived instead of
+  believing the fetcher's exit code. One that started without its script
+  reported success while nothing was installed, and the installer repeated that
+  to the operator.
 - **A WebSocket bridge**, so a browser can reach a game server that speaks TCP.
   It is the `wsbridge` service, it is in a compose profile, and
   `docker compose up -d` does not start it or build it.
