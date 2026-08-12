@@ -17,6 +17,11 @@ every version here.
 
 ---
 
+## 1.11.9 — 2026-08-12
+
+- After registering, a player is shown the ways into the game this server really offers — the browser, the download, or both side by side with **ODER** between them.
+- The browser card stands out and its button opens the game in a **new tab**, so the panel stays open behind it.
+
 ## 1.11.8 — 2026-08-12
 
 - You are asked which clients you want **before** anything large is downloaded, instead of after.

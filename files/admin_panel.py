@@ -1409,14 +1409,14 @@ T = {
                   "de":"Mit diesem Fingerabdruck kannst du prüfen, ob der Download heil angekommen ist — vergleiche ihn mit dem, was dein Prüfsummen-Tool sagt.",
                   "tr":"Bu parmak iziyle indirmenin sağlam geldiğini doğrulayabilirsin — sağlama aracının söylediğiyle karşılaştır."},
  # --- the client that runs in a browser ---
- "play_title":   {"en":"Play right here","de":"Direkt hier spielen","tr":"Hemen burada oyna"},
- "play_hint":    {"en":"No download and no installation — the game runs in this browser tab. It needs a recent browser, and the first start takes a few minutes while it loads.",
-                  "de":"Kein Download, keine Installation — das Spiel läuft in diesem Browser-Tab. Es braucht einen aktuellen Browser, und der erste Start dauert ein paar Minuten, während es lädt.",
-                  "tr":"İndirme yok, kurulum yok — oyun bu tarayıcı sekmesinde çalışır. Güncel bir tarayıcı ister ve ilk açılış, yüklenirken birkaç dakika sürer."},
+ "play_title":   {"en":"PLAY IN YOUR BROWSER NOW","de":"JETZT IM BROWSER SPIELEN","tr":"ŞiMDİ TARAYICINDA OYNA"},
+ "play_hint":    {"en":"No download and no installation, the game will open as a Browser Tab!",
+                  "de":"Kein Download, keine Installation — das Spiel öffnet sich als Browser-Tab!",
+                  "tr":"İndirme yok, kurulum yok — oyun bir tarayıcı sekmesinde açılır!"},
  "play_btn":     {"en":"🎮 Play in the browser","de":"🎮 Im Browser spielen","tr":"🎮 Tarayıcıda oyna"},
- "tip_play":     {"en":"Opens the game in this tab. It is the same server as the downloaded game and the same account — a character made in one is there in the other. The downloaded game runs better; this one needs nothing installed.",
-                  "de":"Öffnet das Spiel in diesem Tab. Es ist derselbe Server wie beim heruntergeladenen Spiel und dasselbe Konto — ein Charakter aus dem einen ist auch im anderen da. Das heruntergeladene Spiel läuft flüssiger; dieses hier braucht keine Installation.",
-                  "tr":"Oyunu bu sekmede açar. İndirilen oyunla aynı sunucu ve aynı hesap — birinde yaptığın karakter diğerinde de vardır. İndirilen oyun daha akıcı çalışır; bu ise hiçbir kurulum istemez."},
+ "tip_play":     {"en":"Opens the game in a new tab, so this page keeps running. It is the same server as the downloaded game and the same account — a character made in one is there in the other. The downloaded game runs better; this one needs nothing installed.",
+                  "de":"Öffnet das Spiel in einem neuen Tab, diese Seite läuft weiter. Es ist derselbe Server wie beim heruntergeladenen Spiel und dasselbe Konto — ein Charakter aus dem einen ist auch im anderen da. Das heruntergeladene Spiel läuft flüssiger; dieses hier braucht keine Installation.",
+                  "tr":"Oyunu yeni bir sekmede açar, bu sayfa açık kalır. İndirilen oyunla aynı sunucu ve aynı hesap — birinde yaptığın karakter diğerinde de vardır. İndirilen oyun daha akıcı çalışır; bu ise hiçbir kurulum istemez."},
  # --- registration polish ---
  "reg_title":    {"en":"Create your game account","de":"Spiel-Konto erstellen","tr":"Oyun hesabı oluştur"},
  "reg_hint":     {"en":"This is the account you'll use to log into the game itself.","de":"Mit diesem Konto meldest du dich im Spiel selbst an.","tr":"Oyuna bu hesapla giriş yapacaksın."},
@@ -1434,6 +1434,12 @@ T = {
  "reg_done_title":{"en":"Your account is ready!","de":"Dein Konto ist fertig!","tr":"Hesabın hazır!"},
  "reg_done_next":{"en":"From here to the game:","de":"Von hier bis ins Spiel:","tr":"Buradan oyuna:"},
  "reg_done_login":{"en":"Log in with the username and password you just chose","de":"Melde dich mit dem eben gewählten Namen und Passwort an","tr":"Az önce seçtiğin ad ve şifreyle giriş yap"},
+ # Shown after registering when this server offers BOTH ways in. The account is
+ # the same either way, and saying so is the whole point: without it the two
+ # cards read as two different games.
+ "reg_both":    {"en":"Two ways in — take either one. It is the same server and the same account.","de":"Zwei Wege ins Spiel — nimm einen davon. Gleicher Server, gleiches Konto.","tr":"Oyuna iki yol — hangisini istersen. Aynı sunucu, aynı hesap."},
+ "reg_or":      {"en":"OR","de":"ODER","tr":"VEYA"},
+ "reg_dl_t":    {"en":"Download the game","de":"Spiel herunterladen","tr":"Oyunu indir"},
  # --- admin: player search, activity, inventory ---
  "search_players":{"en":"Filter by character or account…","de":"Nach Charakter oder Konto filtern…","tr":"Karakter veya hesaba göre süz…"},
  "tip_active":   {"en":"Was in the game within the last few minutes.","de":"War in den letzten Minuten im Spiel.","tr":"Son birkaç dakika içinde oyundaydı."},
@@ -2582,6 +2588,33 @@ font-size:15px;animation:rise .35s ease both;word-break:break-word}
   transform:translateX(-100%);animation:travel 2.4s ease-in-out .6s infinite}
 @keyframes travel{0%{transform:translateX(-100%)}55%,100%{transform:translateX(100%)}}
 
+/* ---- the browser client, once it is ready to play ------------------------
+   This card is the answer to "and now?" for somebody who has just made an
+   account, so it is the one thing on the page that moves. Three layers, all
+   cheap: a sheen that travels across the card, a ring that breathes, and a
+   button that pulses. The global prefers-reduced-motion rule at the bottom of
+   this stylesheet switches every one of them off.                         */
+.playcard{position:relative;overflow:hidden;
+  border-color:rgba(87,193,95,.45);
+  animation:rise .5s cubic-bezier(.22,.7,.35,1) both,playbreathe 3.4s ease-in-out .8s infinite}
+@keyframes playbreathe{
+  0%,100%{box-shadow:0 10px 28px rgba(0,0,0,.4),0 0 0 1px rgba(87,193,95,.12),0 0 26px -6px rgba(87,193,95,.30)}
+  50%    {box-shadow:0 10px 28px rgba(0,0,0,.4),0 0 0 1px rgba(87,193,95,.30),0 0 38px -2px rgba(87,193,95,.45)}}
+/* the sheen: a wide, very faint diagonal band that crosses every few seconds */
+.playcard::after{content:"";position:absolute;top:-60%;left:-60%;width:60%;height:220%;pointer-events:none;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.13),transparent);
+  transform:translateX(-60%) rotate(12deg);animation:sheen 4.5s ease-in-out 1.4s infinite}
+@keyframes sheen{0%{transform:translateX(-60%) rotate(12deg)}
+  45%,100%{transform:translateX(420%) rotate(12deg)}}
+.playcard h3{animation:none}
+/* the button: a green pulse rather than the panel's gold one, because this is
+   "ready, go" and not "look here" -- and a small lift so it reads as pressable */
+.btn.play{animation:playpulse 2.1s ease-out infinite;transition:transform .15s ease}
+.btn.play:hover{transform:translateY(-2px)}
+@keyframes playpulse{
+  0%  {box-shadow:0 0 0 0 rgba(87,193,95,.50),0 2px 10px rgba(0,0,0,.35)}
+  70% {box-shadow:0 0 0 12px rgba(87,193,95,0),0 2px 10px rgba(0,0,0,.35)}
+  100%{box-shadow:0 0 0 0 rgba(87,193,95,0),0 2px 10px rgba(0,0,0,.35)}}
 .btn.glow{animation:btnglow 2.6s ease-in-out infinite}
 @keyframes btnglow{0%,100%{box-shadow:0 2px 10px rgba(233,182,75,.20)}
   50%{box-shadow:0 4px 20px rgba(233,182,75,.42)}}
@@ -2696,11 +2729,12 @@ setInterval(function(){
 {# Shown only when a browser client is really on the volume and switched on.
    It goes above the download because it is the shorter road for somebody who
    just wants to look: nothing to fetch and nothing to install. #}
-<div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
+<div class="card playcard" style="max-width:420px;margin:0 auto 16px;text-align:center">
 <div style="font-size:40px">🌐</div>
 <h3>{{t('play_title')}}</h3>
 <p class="muted">{{t('play_hint')}}</p>
-<a class="btn big" href="{{play_url}}" title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+<a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
+   title="{{t('tip_play')}}">{{t('play_btn')}}</a>
 </div>
 {% endif %}
 {% if local_only %}
@@ -2837,11 +2871,37 @@ TPL_REGISTER = BASE.replace("__BODY__", """
 })();
 </script>""")
 
+# What a new player is told to do next depends on what this server actually
+# offers, and the three cases are genuinely different pages:
+#
+#   desktop only   the original: download, unpack, run.
+#   browser only   there is nothing to download, and telling somebody to unpack
+#                  a zip that does not exist is worse than saying nothing.
+#   both           two cards, side by side, with ODER between them -- because
+#                  they are alternatives, not steps. The account is the same in
+#                  either, and the page says so: without that line two cards
+#                  read as two different games.
+#
+# The cards are flex items with a min-width, so a phone stacks them without a
+# media query and the OR falls between the two on its own line.
 TPL_REG_DONE = BASE.replace("__BODY__", """
-<div class="card" style="max-width:440px;margin:40px auto;text-align:center">
-<div style="font-size:48px">🎉</div>
-<h3>{{t('reg_done_title')}}</h3>
-<p class="muted">{{t('reg_done_next')}}</p>
+{% macro web_card() %}
+<div class="card playcard" style="flex:1 1 300px;max-width:380px;margin:0;text-align:center">
+<div style="font-size:40px">🌐</div>
+<h3>{{t('play_title')}}</h3>
+<p class="muted">{{t('play_hint')}}</p>
+<ol class="steps">
+<li>{{t('reg_done_login')}}</li>
+</ol>
+<a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
+   title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+</div>
+{% endmacro %}
+
+{% macro desktop_card() %}
+<div class="card" style="flex:1 1 300px;max-width:380px;margin:0;text-align:center">
+<div style="font-size:40px">📥</div>
+<h3>{{t('reg_dl_t')}}</h3>
 <ol class="steps">
 <li>{{t('dl_st1')}}{% if dlsize %} ({{dlsize}}){% endif %}</li>
 <li>{{t('dl_st2')}}</li>
@@ -2850,12 +2910,37 @@ TPL_REG_DONE = BASE.replace("__BODY__", """
 </ol>
 {% if local_only %}
 <p class="muted">{{t('dl_local')|safe}}</p>
-{% elif client_ready or client_url %}
+{% else %}
 <a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
    title="{{t('tip_download')}}" {% if client_url %}rel="noopener noreferrer"{% endif %}>{{t('download')}}</a>
 <p class="muted" style="font-size:13px;margin:6px 0 0">🌍 {{t('dl_lang').format(lang=game_lang_name)}}</p>
 {% endif %}
-<p style="margin-top:10px"><a href="{{url_for('login')}}">← {{brand}}</a></p></div>""")
+</div>
+{% endmacro %}
+
+{% set has_desktop = local_only or client_ready or client_url %}
+{% set both = browser_ready and has_desktop %}
+
+<div style="max-width:{{ '860px' if both else '440px' }};margin:40px auto;text-align:center">
+<div style="font-size:48px">🎉</div>
+<h3>{{t('reg_done_title')}}</h3>
+<p class="muted">{{ t('reg_both') if both else t('reg_done_next') }}</p>
+
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:18px;margin-top:18px">
+{% if browser_ready %}{{ web_card() }}{% endif %}
+{% if both %}
+<div style="font-size:26px;font-weight:800;letter-spacing:2px;flex:0 0 auto">{{t('reg_or')}}</div>
+{% endif %}
+{% if has_desktop %}{{ desktop_card() }}{% endif %}
+</div>
+
+{% if not browser_ready and not has_desktop %}
+{# Neither is set up. The account is still real and still works, so say that
+   much rather than showing an empty page under a title that says it is ready. #}
+<ol class="steps" style="display:inline-block;text-align:left"><li>{{t('reg_done_login')}}</li></ol>
+{% endif %}
+
+<p style="margin-top:16px"><a href="{{url_for('login')}}">← {{brand}}</a></p></div>""")
 
 TPL_ACCOUNT_LOGIN = BASE.replace("__BODY__", """
 <p><a href="{{url_for('login')}}">← Back</a></p>
@@ -3875,7 +3960,9 @@ def register():
                         (lg, m2_hash(pw), social))
                 return render_template_string(TPL_REG_DONE,
                                               client_ready=os.path.exists(CLIENT_ZIP),
-                                              client_url=CLIENT_URL)
+                                              client_url=CLIENT_URL,
+                                              browser_ready=browser_play_ready(),
+                                              play_url=play_url())
             except Exception:
                 flash("The account could not be created right now. Please try again in a bit. 🙏", "error")
     return render_template_string(TPL_REGISTER, form=form)
