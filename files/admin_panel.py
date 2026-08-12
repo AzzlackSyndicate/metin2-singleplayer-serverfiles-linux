@@ -683,7 +683,8 @@ CLIENT_URL = _clean_client_url(CONF.get("client_url", ""))
 #  three rather than assuming any of them:
 #
 #    1. the operator switched it on           M2PANEL_BROWSER_PLAY=1
-#    2. a browser client is actually here     browser/index.html on the volume
+#    2. a browser client is actually here     browser/current/index.html on the
+#                                             volume, or browser/index.html
 #    3. the bridge answers                    it is in a compose profile and is
 #                                             not started by `up -d'
 #
@@ -718,12 +719,37 @@ BRIDGE_HOST = str(CONF.get("bridge_host", "wsbridge") or "wsbridge")
 _BRIDGE_CACHE = {"at": 0.0, "ports": None}
 _BRIDGE_LOCK  = threading.Lock()
 
+def browser_root():
+    """The directory the browser client actually lives in.
+
+    Two layouts have to work, and which one is present is not a preference:
+
+      browser/index.html          placed by hand, the original arrangement
+      browser/current/index.html  installed by fetch-web-client.sh, where
+                                  `current' is a symlink to browser/v<engine>-
+                                  <data> so that an upgrade is one atomic
+                                  rename(2) and a downgrade is the same
+
+    So look for the versioned layout first and fall back to the flat one. The
+    check is a stat per call rather than a value worked out at import, because
+    the client is routinely installed into a running panel -- deciding this
+    once at startup is what made the button stay hidden after an install until
+    somebody restarted the container.
+    """
+    try:
+        versioned = os.path.join(BROWSER_DIR, "current")
+        if os.path.isfile(os.path.join(versioned, "index.html")):
+            return versioned
+    except OSError:
+        pass
+    return BROWSER_DIR
+
 def browser_client_ready():
     """Is there a browser client on the volume to serve?"""
     if not BROWSER_PLAY:
         return False
     try:
-        return os.path.isfile(os.path.join(BROWSER_DIR, "index.html"))
+        return os.path.isfile(os.path.join(browser_root(), "index.html"))
     except OSError:
         return False
 
@@ -3671,8 +3697,10 @@ def download():
 # route as the fallback for an install with no proxy in front.
 
 def _play_dir_file(rel):
-    """An absolute path inside BROWSER_DIR, or None if it escapes it."""
-    root = os.path.realpath(BROWSER_DIR)
+    """An absolute path inside the browser client's directory, or None if it
+    escapes it. realpath on both sides, so `current' being a symlink to the
+    versioned directory resolves to the same root the file does."""
+    root = os.path.realpath(browser_root())
     full = os.path.realpath(os.path.join(root, rel))
     if full != root and not full.startswith(root + os.sep):
         return None
@@ -3726,7 +3754,7 @@ def play():
     if not browser_client_ready():
         flash("Playing in the browser is not set up on this server.", "error")
         return redirect(url_for("login"))
-    resp = send_from_directory(BROWSER_DIR, "index.html")
+    resp = send_from_directory(browser_root(), "index.html")
     return _play_headers(resp, "no-cache")
 
 @app.route("/play/<path:sub>")
@@ -3736,7 +3764,7 @@ def play_asset(sub):
     if _play_dir_file(sub) is None:
         return ("not found", 404)
     try:
-        resp = send_from_directory(BROWSER_DIR, sub, conditional=True)
+        resp = send_from_directory(browser_root(), sub, conditional=True)
     except Exception:
         return ("not found", 404)
     # Flask guesses .wasm correctly on a modern mimetypes database and not on

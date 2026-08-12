@@ -17,6 +17,20 @@ every version here.
 
 ---
 
+## 1.11.2 — 2026-08-12
+
+### Fixed
+
+- The panel shows the **Play in Browser** card again. It looked for the browser
+  client at `browser/index.html` while the installer puts it at
+  `browser/current/index.html` -- the same one-level-too-high mistake 1.11.1
+  fixed in nginx, in the second place that had its own copy of the path. The
+  panel now looks in `browser/current` first and falls back to `browser`, so a
+  client placed there by hand keeps working.
+- That check is made per request rather than once at startup. Installing the
+  browser client into a running panel now shows the card immediately instead of
+  after the next restart.
+
 ## 1.11.1 — 2026-08-12
 
 ### Fixed
