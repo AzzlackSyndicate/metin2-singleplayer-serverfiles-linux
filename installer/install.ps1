@@ -2281,9 +2281,17 @@ function Test-InstalledClients {
         'exit 0'
     ) -join '; '
 
-    $seen = Invoke-DockerQuiet @('compose','run','--rm','--no-deps','--entrypoint','sh','panel','-c',$probe)
-    if ($seen -match 'web')     { $script:HaveWeb     = $true }
-    if ($seen -match 'desktop') { $script:HaveDesktop = $true }
+    # Invoke-ComposeQuiet, which is this script's helper -- Invoke-DockerQuiet is
+    # a function of the UPDATER, which lives in a here-string further up and is
+    # not in scope here. -T because there is no terminal to attach.
+    $seen = Invoke-ComposeQuiet @('run','--rm','-T','--no-deps','--entrypoint','sh','panel','-c',$probe)
+    if ($seen.Code -eq 0 -and $seen.Output) {
+        # Anchored to whole lines: compose prints its own progress into the same
+        # stream, and a bare -match 'web' would find "webclient-fetcher" there
+        # and report a browser client that is not installed.
+        if ($seen.Output -match '(?m)^web$')     { $script:HaveWeb     = $true }
+        if ($seen.Output -match '(?m)^desktop$') { $script:HaveDesktop = $true }
+    }
 }
 
 function Select-Clients {
@@ -2324,25 +2332,25 @@ function Select-Clients {
             # anyone into.
             $prev = Get-EnvValue (Join-Path $script:InstallDir '.env') 'M2_BROWSER_PLAY'
             $def  = ($prev -in @('1','true','yes','on'))
-            Say 'This install offers the desktop client only.'
-            Say 'The browser client lets you play from a link -- no download, no'
-            Say 'install. It needs about 1.8 GB on this PC.'
-            if ($def) { Say '(M2_BROWSER_PLAY is already 1 here, so only the files are missing.)' }
+            Write-Say 'This install offers the desktop client only.'
+            Write-Say 'The browser client lets you play from a link -- no download, no'
+            Write-Say 'install. It needs about 1.8 GB on this PC.'
+            if ($def) { Write-Say '(M2_BROWSER_PLAY is already 1 here, so only the files are missing.)' }
             if (Confirm-YesNo 'Add the browser client?' $def) { $script:WantWeb = $true }
         }
         if (-not $script:HaveDesktop) {
-            Say 'This install offers the browser client only.'
-            Say 'The desktop client is the classic download behind the panel button.'
+            Write-Say 'This install offers the browser client only.'
+            Write-Say 'The desktop client is the classic download behind the panel button.'
             if (Confirm-YesNo 'Add the desktop client as well?' $false) { $script:WantDesktop = $true }
         }
         return
     }
 
-    Say ''
-    Say '  1  Browser only    click a link and play              ~1.8 GB'
-    Say '  2  Desktop only    the classic download in the panel  ~1.3 GB'
-    Say '  3  Both                                               ~3.1 GB'
-    Say ''
+    Write-Say ''
+    Write-Say '  1  Browser only    click a link and play              ~1.8 GB'
+    Write-Say '  2  Desktop only    the classic download in the panel  ~1.3 GB'
+    Write-Say '  3  Both                                               ~3.1 GB'
+    Write-Say ''
     while ($true) {
         if (-not [Environment]::UserInteractive) { $pick = '3' }
         else {
@@ -2381,18 +2389,30 @@ function Get-WebClient {
     # The fetcher's own exit codes, so this says what went wrong rather than
     # "it failed". The install is NOT aborted: a server whose game runs is worth
     # having even when the browser client could not be fetched.
-    Invoke-Docker @('compose','--profile','webclient','run','--rm','webclient-fetcher')
-    if ($LASTEXITCODE -eq 0) {
+    # Invoke-Compose, this script's helper, and its RETURN VALUE. $LASTEXITCODE
+    # after calling a PowerShell function is whatever the last native command
+    # inside it happened to leave behind, which is not the same thing and here
+    # was not even the fetcher's.
+    $rc = Invoke-Compose @('--profile','webclient','run','--rm','webclient-fetcher')
+
+    # Ask whether a browser client is actually there, rather than believing the
+    # exit code -- the same check install.sh makes, for the same reason: a
+    # fetcher that started without its script once exited 0 while nothing
+    # arrived, and the installer repeated that to the operator.
+    $ok = Invoke-ComposeQuiet @('run','--rm','-T','--no-deps','--entrypoint','sh','panel','-c',
+                                '[ -f /usr/local/m2panel/browser/current/index.html ]')
+    if ($ok.Code -eq 0) {
         Write-Good 'Browser client installed.'
+        $script:HaveWeb = $true
         return
     }
-    switch ($LASTEXITCODE) {
+    switch ($rc) {
         3 { Write-Warn 'The fetcher is missing a tool it needs (unzip, curl, megatools).' }
         4 { Write-Warn 'A download did not finish. Check this PC''s connection, then run the installer again.' }
         5 { Write-Warn 'A downloaded archive had the wrong checksum -- damaged, or replaced.' }
         7 { Write-Warn 'Not enough disk space for the browser client (~1.8 GB unpacked).' }
         8 { Write-Warn 'The MEGA link for the browser client''s data has not been filled in yet.' }
-        default { Write-Warn "Fetching the browser client failed (exit $LASTEXITCODE)." }
+        default { Write-Warn "Fetching the browser client failed (exit $rc)." }
     }
     Write-Warn 'The server itself is unaffected. Run the installer again to retry.'
     $script:WantWeb = $false

@@ -17,6 +17,34 @@ every version here.
 
 ---
 
+## 1.11.7 — 2026-08-12
+
+### Fixed
+
+- The Windows installer no longer stops at "Which clients your players get".
+  It called `Invoke-DockerQuiet` and `Say`, which are functions of the UPDATER
+  -- a second script that lives inside `install.ps1` as a here-string and is
+  written to disk, not run. They do not exist in the installer's own scope, so
+  the step died the moment it was reached. `install.ps1` is now checked with
+  PowerShell's own parser, which lists the functions the file really defines
+  and every command it calls: that check finds this class of mistake, and
+  reading the file did not.
+- It also read the fetcher's exit code from `$LASTEXITCODE` after calling a
+  PowerShell function, which is whatever the last native command inside it
+  happened to leave behind. It uses the return value now, and -- as install.sh
+  already did -- checks that a browser client actually arrived rather than
+  believing any exit code at all.
+- A new install downloads **the server alone**, not the old combined package.
+  `artifacts.json` has named the split archives since 1.11.0, but nothing told
+  `fetch-sources.sh`, so it fell back to the address compiled into it: 1.6 GB
+  of server *and* desktop client, downloaded in full even by somebody who chose
+  the browser client and would never unpack a desktop client. It is 223 MB now,
+  and its checksum is verified.
+- The desktop client is fetched from its own archive. Left unset, the client
+  builder looked for a client inside the server files, which is where it used
+  to be and no longer is. The installer writes `M2_CLIENT_ARCHIVE_URL` from
+  `artifacts.json` -- and leaves it alone if you set it yourself.
+
 ## 1.11.6 — 2026-08-12
 
 ### Fixed

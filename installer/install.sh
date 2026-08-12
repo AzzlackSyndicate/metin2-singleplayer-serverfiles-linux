@@ -852,7 +852,61 @@ locate_repo() {
 #  MEGA link usually means the share has hit its bandwidth quota, not that
 #  anything is broken.
 # -----------------------------------------------------------------------------
+# ── artifacts.json, the one place that says where the big files live ─────────
+#
+# Same reader as linux-port/fetch-web-client.sh uses, and the same reason the
+# file is kept flat: there is no JSON parser to rely on here.
+pointer_file() {
+    for _p in "$REPO_DIR/artifacts.json" "$INSTALL_DIR/artifacts.json"; do
+        [ -n "$_p" ] && [ -f "$_p" ] && { printf '%s\n' "$_p"; return 0; }
+    done
+    return 1
+}
+
+pointer_get() {   # pointer_get KEY -- string or number, empty when absent
+    _pf=$(pointer_file) || return 0
+    _pv=$(sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_pf" 2>/dev/null | head -1)
+    if [ -z "$_pv" ]; then
+        _pv=$(sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$_pf" 2>/dev/null | head -1)
+    fi
+    printf '%s\n' "$_pv"
+}
+
+# A value that is not a link has not been filled in. Every reader of this file
+# makes that check rather than attempting a meaningless download.
+pointer_link() {  # pointer_link KEY -- the link, or nothing
+    _v=$(pointer_get "$1")
+    case "$_v" in
+        https://*|http://*) printf '%s\n' "$_v" ;;
+        *) : ;;
+    esac
+}
+
 run_fetch_sources() {
+    # WHERE THE SERVER FILES COME FROM.
+    #
+    # From artifacts.json, so that the split archives are used: Reference_Server.zip
+    # is the server alone, and the desktop client travels separately in
+    # Reference_Client.zip. Without this, fetch-sources.sh falls back to the
+    # DEFAULT_URL compiled into it -- the old combined package, 1.6 GB of server
+    # AND client, which is downloaded in full even by somebody who chose the
+    # browser client and will never unpack a desktop client at all.
+    #
+    # Anything the operator said wins: --source-url, a local archive, an
+    # unpacked directory. This only fills in the blank.
+    if [ -z "$M2_SRC_URL" ] && [ -z "$M2_SRC_ARCHIVE" ] && [ -z "$M2_SRC_REFERENCE_DIR" ]; then
+        _pu=$(pointer_link src_server_url)
+        if [ -n "$_pu" ]; then
+            M2_SRC_URL="$_pu"
+            _ps=$(pointer_get src_server_sha256)
+            case "$_ps" in
+                ????????????????????????????????????????????????????????????????)
+                    M2_SRC_SHA256="$_ps"; export M2_SRC_SHA256 ;;
+            esac
+            info "server files: $(pointer_get src_server_file) (from artifacts.json)"
+        fi
+    fi
+
     _fs="$REPO_DIR/linux-port/fetch-sources.sh"
     [ -f "$_fs" ] || die "$_fs is missing from the checkout. That file is what
   turns a checkout into a buildable server; without it there is nothing to do."
@@ -868,8 +922,13 @@ run_fetch_sources() {
     elif [ -n "$M2_SRC_ARCHIVE" ]; then
         info "using the package archive $M2_SRC_ARCHIVE"
     else
-        say "It is a 1.6 GB download the first time, into $M2_SRC_CACHE."
-        say "Give it half an hour on a fast connection."
+        _mb=$(pointer_get src_server_size_mb)
+        case "$_mb" in
+            ''|*[!0-9]*) say "It is a download of a few hundred MB the first time," ;;
+            *)           say "It is a ${_mb} MB download the first time," ;;
+        esac
+        say "into $M2_SRC_CACHE. The desktop client is NOT part of it -- that is"
+        say "a separate download, and only if you ask for it."
     fi
     say ""
 
@@ -1478,6 +1537,28 @@ write_env() {
     BROWSER_PLAY="$WANT_WEB"
     case "$BROWSER_PLAY" in 1|true|yes|on) BROWSER_PLAY=1 ;; *) BROWSER_PLAY=0 ;; esac
     env_set "$_env" M2_BROWSER_PLAY "$BROWSER_PLAY"
+
+    # WHERE THE DESKTOP CLIENT COMES FROM.
+    #
+    # Its own archive since the package was split, so the builder has to be told
+    # -- left empty it looks for the client inside the server files, which is
+    # where it used to be and no longer is. A server-only download plus a client
+    # builder looking for a client it cannot find is a confusing failure, and it
+    # only happens to people who asked for the desktop client.
+    #
+    # Not overwritten: an operator who set this by hand, to a client of their
+    # own with their own patches in it, keeps theirs.
+    if [ -z "$(env_get "$_env" M2_CLIENT_ARCHIVE_URL || true)" ]; then
+        _cu=$(pointer_link src_client_url)
+        if [ -n "$_cu" ]; then
+            env_set "$_env" M2_CLIENT_ARCHIVE_URL "$_cu"
+            _cs=$(pointer_get src_client_sha256)
+            case "$_cs" in
+                ????????????????????????????????????????????????????????????????)
+                    env_set "$_env" M2_CLIENT_ARCHIVE_SHA256 "$_cs" ;;
+            esac
+        fi
+    fi
     _bp=$(env_get "$_env" M2_BRIDGE_PORT || true)
     [ -n "$_bp" ] && BRIDGE_PORT="$_bp"
     env_set "$_env" M2_BRIDGE_PORT "$BRIDGE_PORT"
