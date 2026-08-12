@@ -96,6 +96,36 @@ case "${0:-}" in
     *) [ -f "$0" ] && SELF_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd) ;;
 esac
 
+# A working directory that was deleted underneath us. This is not a strange
+# edge case: the uninstall instructions have you `cd /opt/metin2/stack' to take
+# a database backup, and `rm -rf /opt/metin2' a few steps later. Run the
+# installer from that same shell and it starts in a directory that no longer
+# has a path.
+#
+# Nothing looks wrong. Linux keeps the directory's inode alive for as long as a
+# process stands in it, so `pwd' prints the old name out of the shell's own
+# cache and even `[ -d . ]' succeeds -- both were measured doing exactly that.
+# Only getcwd() fails, and the first symptom used to be git giving up three
+# minutes into the run with "Unable to read current working directory", which
+# reads like a network fault and is not one.
+#
+# `pwd -P' is the portable way to put the question to getcwd() directly, but it
+# has to be asked by its OUTPUT and not by its exit status. Measured in all
+# three shells with the directory gone: dash and sh print the error and still
+# exit 0; only bash exits 1. Stdout is empty in every one of them, whether this
+# shell deleted the directory itself or inherited it from the one that did.
+# `cd .' is no good either -- it fails in sh and dash but succeeds in bash --
+# and `[ -d . ]' succeeds everywhere, because the inode outlives the name for
+# as long as a process stands in it.
+#
+# Nothing here needs the starting directory: every path is absolute by the time
+# it is used. So moving to / costs nothing and rescues the run.
+if [ -z "$(pwd -P 2>/dev/null)" ]; then
+    printf '\n  The directory you started this from has been deleted.\n' >&2
+    printf '  That is harmless -- carrying on from / instead.\n\n' >&2
+    cd / || exit 1
+fi
+
 # Defaults. Every one of these can be changed with a command-line flag.
 INSTALL_DIR="${M2_INSTALL_DIR:-/opt/metin2/stack}"
 PUBLIC_ADDRESS="${M2_PUBLIC_ADDRESS:-}"
@@ -834,6 +864,15 @@ locate_repo() {
         say "Getting the project from $M2_REPO_URL ..."
         say "This is a few megabytes -- it is the port, not the game."
         mkdir -p "$(dirname "$REPO_DIR")"
+        # Do not delete the ground we are standing on. Somebody who ran this
+        # from inside the old checkout -- a natural thing to do, it is where
+        # install.sh lives -- would otherwise lose their working directory to
+        # the line below, and git would then refuse to clone into it with
+        # "Unable to read current working directory". Leaving first is enough,
+        # and only done when it is actually about to happen.
+        case "$(pwd -P 2>/dev/null)/" in
+            "$REPO_DIR"/*) cd / || die "could not leave $REPO_DIR" ;;
+        esac
         rm -rf "$REPO_DIR"
         git clone --depth 1 "$M2_REPO_URL" "$REPO_DIR" || die \
 "The project could not be cloned from

@@ -76,10 +76,28 @@ hundred MB and save the next install from downloading them again.
 
 ### 3. Remove the files on disk
 
+**Leave the directory first.** You are standing in `/opt/metin2/stack` from the
+backup step, and you are about to delete it.
+
 ```sh
+cd /
 rm -rf /opt/metin2
 rm -rf /var/cache/m2src /var/cache/m2webclient
 ```
+
+Skip that `cd /` and nothing appears to go wrong — the shell keeps printing the
+old directory name, because Linux keeps the directory alive for as long as a
+process is standing in it. It is the *next* command that fails, and it fails in
+a way that points nowhere near the cause:
+
+```
+fatal: Unable to read current working directory: No such file or directory
+fatal: remote helper 'https' aborted session
+```
+
+That is a shell in a directory that no longer has a path, not a network fault.
+`cd /` and run the command again. Installers from 1.12.2 onwards notice this
+themselves and carry on.
 
 That is the ~5.5 GB. If you are reinstalling straight away and your connection
 is slow, keep `/var/cache/m2src` — the next install reuses the archive in it

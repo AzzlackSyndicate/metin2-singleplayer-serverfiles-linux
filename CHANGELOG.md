@@ -17,6 +17,13 @@ every version here.
 
 ---
 
+## 1.12.2 — 2026-08-12
+
+### Fixed
+
+- **The installer survives being run from a directory that was deleted.** Uninstall, then reinstall from the same terminal, and the installer used to stop three minutes in with `fatal: Unable to read current working directory` — which reads like a network problem and is not one. It now says what actually happened and carries on. The same protection covers the installer's own doing: it refreshes its checkout by deleting it, which pulled the rug out from under anyone who happened to be standing in it.
+- [UNINSTALL.md](UNINSTALL.md) now says to leave the directory before deleting it, and shows that error so it can be recognised.
+
 ## 1.12.1 — 2026-08-12
 
 - **[UNINSTALL.md](UNINSTALL.md)** — how to remove an installation completely and put a fresh one in its place. It says which of the five places an installation lives in can be thrown away freely, which one holds every character on your server, and how to save that one first. It also lists the three cheaper things to try before wiping anything.
