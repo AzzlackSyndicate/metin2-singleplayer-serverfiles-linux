@@ -17,6 +17,17 @@ every version here.
 
 ---
 
+## 1.11.6 — 2026-08-12
+
+### Fixed
+
+- 1.11.5 stopped the admin panel from starting on a server with a domain. The
+  list of headers it hands waitress was comma-separated; waitress splits that
+  value on spaces, so the whole list arrived as one unrecognised name and it
+  refused to start -- and since the panel is the container's only process,
+  refusing to start is the container restarting for ever. The syntax is now
+  checked against waitress itself before release rather than assumed.
+
 ## 1.11.5 — 2026-08-12
 
 ### Fixed

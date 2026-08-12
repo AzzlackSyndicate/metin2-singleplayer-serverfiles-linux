@@ -297,9 +297,14 @@ set -- --host="$M2_PANEL_BIND" \
        --threads="$M2_PANEL_THREADS"
 case "${M2PANEL_TRUST_PROXY:-0}" in
     1|true|yes|on|TRUE|YES|ON)
+        # Space-separated, in ONE argument. waitress splits this value on
+        # whitespace and validates each name against its own list, so a
+        # comma-separated list arrives as a single unknown name and waitress
+        # refuses to start -- which takes the panel down rather than degrading
+        # it, because the entrypoint execs it as the container's only process.
         set -- "$@" \
             "--trusted-proxy=${M2_PANEL_TRUSTED_PROXY:-*}" \
-            "--trusted-proxy-headers=x-forwarded-for,x-forwarded-proto,x-forwarded-host"
+            "--trusted-proxy-headers=x-forwarded-for x-forwarded-proto x-forwarded-host"
         log "trusting the reverse proxy at ${M2_PANEL_TRUSTED_PROXY:-any address}"
         ;;
 esac
