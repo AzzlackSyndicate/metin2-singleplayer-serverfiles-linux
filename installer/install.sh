@@ -2731,6 +2731,15 @@ summary() {
 #
 # Sets HAVE_WEB / HAVE_DESKTOP. Never fails the install -- if the stack is not
 # up yet, both are simply 0, which is the truth.
+# Is there already a server here? fetch_stack works this out too, from the same
+# file -- but the client question is asked BEFORE it now, and it needs the
+# answer: on a first install there is nothing to detect and asking the panel
+# would build its image just to be told so.
+detect_existing_install() {
+    [ -f "$INSTALL_DIR/docker-compose.yml" ] && FRESH_INSTALL=0
+    return 0
+}
+
 detect_installed_clients() {
     HAVE_WEB=0
     HAVE_DESKTOP=0
@@ -2950,12 +2959,22 @@ main() {
     check_disk
 
     install_docker
+
+    # ASKED BEFORE ANYTHING LARGE IS DOWNLOADED.
+    #
+    # The answer decides what gets fetched -- the browser client's 1.75 GB of
+    # data, the desktop client's 1.29 GB, or neither -- so asking after the
+    # server files have already come down means half an hour of waiting before
+    # the one question the operator actually has to answer. It needs to know
+    # only whether a server is already here, which is one file test.
+    detect_existing_install
+    choose_clients
+
     fetch_stack
     choose_address
     choose_domain
     # Before write_env, because the answer decides M2_BROWSER_PLAY -- the bridge
     # must not be turned on for a server that has no browser client to serve.
-    choose_clients
     write_env
     write_local_override
     start_stack

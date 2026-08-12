@@ -296,6 +296,63 @@ function Get-EnvValue {
     return ''
 }
 
+# ── artifacts.json, the one place that says where the big files live ─────────
+#
+# The same pointer install.sh reads, and it has to be read here too or this
+# installer downloads the old combined package: fetch-sources.sh falls back to
+# the address compiled into it, which is 1.6 GB of server AND desktop client,
+# fetched in full even by somebody who chose the browser client.
+#
+# There is no checkout on this PC to read it from -- the project is cloned
+# inside a container -- so it is fetched from the same place this script came
+# from, and kept beside docker-compose.yml once there is an install directory.
+$script:PointerPath = ''
+function Get-PointerFile {
+    if ($script:PointerPath -and (Test-Path -LiteralPath $script:PointerPath)) {
+        return $script:PointerPath
+    }
+    foreach ($c in @(
+        (Join-Path $script:InstallDir 'artifacts.json'),
+        $(if ($script:RepoDir) { Join-Path $script:RepoDir 'artifacts.json' } else { $null })
+    )) {
+        if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) {
+            $script:PointerPath = $c
+            return $c
+        }
+    }
+    $raw = $script:SelfUrl -replace '/installer/install\.ps1$', '/artifacts.json'
+    $dest = Join-Path $env:TEMP 'm2-artifacts.json'
+    try {
+        Invoke-WebRequest -Uri $raw -OutFile $dest -UseBasicParsing -TimeoutSec 60
+        if ((Test-Path -LiteralPath $dest) -and (Get-Item $dest).Length -gt 0) {
+            $script:PointerPath = $dest
+            return $dest
+        }
+    } catch { }
+    return ''
+}
+
+function Get-PointerValue {
+    param([string]$Key)
+    $f = Get-PointerFile
+    if (-not $f) { return '' }
+    $text = [IO.File]::ReadAllText($f)
+    $m = [regex]::Match($text, '"' + [regex]::Escape($Key) + '"\s*:\s*"([^"]*)"')
+    if ($m.Success) { return $m.Groups[1].Value }
+    $m = [regex]::Match($text, '"' + [regex]::Escape($Key) + '"\s*:\s*([0-9]+)')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return ''
+}
+
+# A value that is not a link has not been filled in yet. Every reader of that
+# file makes this check rather than attempting a meaningless download.
+function Get-PointerLink {
+    param([string]$Key)
+    $v = Get-PointerValue $Key
+    if ($v -match '^https?://') { return $v }
+    return ''
+}
+
 function Set-EnvValue {
     param([string]$Path, [string]$Key, [string]$Value)
     $lines = @()
@@ -973,9 +1030,29 @@ function Invoke-SourceFetch {
         }
     }
     else {
-        if ($script:SrcUrl) { $runArgs += @('-e', "M2_SRC_URL=$($script:SrcUrl)") }
-        Write-Say 'The original server-file package is about 1.6 GB and is'
-        Write-Say 'downloaded once. Half an hour on a fast connection.'
+        # Where the server files come from: artifacts.json, so that the SERVER
+        # archive is used rather than the old package that carried the desktop
+        # client with it. Anything the operator said wins; this fills the blank.
+        $url = $script:SrcUrl
+        $sha = ''
+        if (-not $url) {
+            $url = Get-PointerLink 'src_server_url'
+            if ($url) {
+                $sha = Get-PointerValue 'src_server_sha256'
+                Write-Info "server files: $(Get-PointerValue 'src_server_file') (from artifacts.json)"
+            }
+        }
+        if ($url) { $runArgs += @('-e', "M2_SRC_URL=$url") }
+        if ($sha -match '^[0-9a-f]{64}$') { $runArgs += @('-e', "M2_SRC_SHA256=$sha") }
+
+        $mb = Get-PointerValue 'src_server_size_mb'
+        if ($mb -match '^[0-9]+$') {
+            Write-Say "The server files are about $mb MB and are downloaded once."
+        } else {
+            Write-Say 'The server files are a few hundred MB and are downloaded once.'
+        }
+        Write-Say 'The desktop client is NOT part of that -- it is a separate'
+        Write-Say 'download, and only if you ask for it.'
         Write-Say ''
         Write-Say 'It is kept in a Docker volume afterwards, so running this'
         Write-Say 'installer again does not download it a second time.'
@@ -1204,6 +1281,16 @@ function Test-VersionNewer([string]$a, [string]$b) {
         if ($p -lt $q) { return $false }
     }
     return $false
+}
+
+# Is there already a server here? Get-Stack works this out too, from the same
+# file -- but the client question is asked BEFORE it now, and it needs the
+# answer: on a first install there is nothing to detect, and asking the panel
+# would build its image just to be told so.
+function Test-ExistingInstall {
+    if (Test-Path -LiteralPath (Join-Path $script:InstallDir 'docker-compose.yml')) {
+        $script:FreshInstall = $false
+    }
 }
 
 function Get-Stack {
@@ -1497,6 +1584,22 @@ downloaded server files, the client -- is kept either way.
     $browserPlay = if ($script:WantWeb) { '1' } else { '0' }
     $script:BrowserPlay = $browserPlay
     Set-EnvValue $envPath 'M2_BROWSER_PLAY' $browserPlay
+
+    # Where the desktop client comes from: its own archive since the package was
+    # split. Left empty, the builder looks for a client inside the server files,
+    # which is where it used to be and no longer is. Not overwritten, so an
+    # operator who pointed this at a client of their own keeps theirs.
+    if (-not (Get-EnvValue $envPath 'M2_CLIENT_ARCHIVE_URL')) {
+        $cu = Get-PointerLink 'src_client_url'
+        if ($cu) {
+            Set-EnvValue $envPath 'M2_CLIENT_ARCHIVE_URL' $cu
+            $cs = Get-PointerValue 'src_client_sha256'
+            if ($cs -match '^[0-9a-f]{64}$') {
+                Set-EnvValue $envPath 'M2_CLIENT_ARCHIVE_SHA256' $cs
+            }
+        }
+    }
+
     $bridgePort = Get-EnvValue $envPath 'M2_BRIDGE_PORT'
     if (-not $bridgePort) { $bridgePort = '7789' }
     $script:BridgePort = $bridgePort
@@ -3077,11 +3180,19 @@ function Invoke-Metin2Install {
     try {
         Test-Machine
         Initialize-Docker
-        Get-Stack
-        # Before Write-Configuration, because the answer decides
-        # M2_BROWSER_PLAY: the bridge must not be switched on for an install
-        # that has no browser client to serve.
+        # ASKED BEFORE ANYTHING LARGE IS DOWNLOADED.
+        #
+        # The answer decides what gets fetched -- the browser client's 1.75 GB
+        # of data, the desktop client's 1.29 GB, or neither -- so asking after
+        # the server files have already come down means a long wait before the
+        # one question the operator actually has to answer. It also decides
+        # M2_BROWSER_PLAY, so it still has to precede Write-Configuration: the
+        # bridge must not be switched on for an install with no browser client
+        # to serve.
+        Test-ExistingInstall
         Select-Clients
+
+        Get-Stack
         Write-Configuration
         Write-LoopbackOverride
         Start-Stack

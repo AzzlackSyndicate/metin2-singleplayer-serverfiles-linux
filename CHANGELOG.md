@@ -17,266 +17,73 @@ every version here.
 
 ---
 
+## 1.11.8 — 2026-08-12
+
+- You are asked which clients you want **before** anything large is downloaded, instead of after.
+- The Windows installer downloads only the server too, about 220 MB instead of 1.6 GB.
+- The release notes below are written in plain language.
+
 ## 1.11.7 — 2026-08-12
 
-### Fixed
-
-- The Windows installer no longer stops at "Which clients your players get".
-  It called `Invoke-DockerQuiet` and `Say`, which are functions of the UPDATER
-  -- a second script that lives inside `install.ps1` as a here-string and is
-  written to disk, not run. They do not exist in the installer's own scope, so
-  the step died the moment it was reached. `install.ps1` is now checked with
-  PowerShell's own parser, which lists the functions the file really defines
-  and every command it calls: that check finds this class of mistake, and
-  reading the file did not.
-- It also read the fetcher's exit code from `$LASTEXITCODE` after calling a
-  PowerShell function, which is whatever the last native command inside it
-  happened to leave behind. It uses the return value now, and -- as install.sh
-  already did -- checks that a browser client actually arrived rather than
-  believing any exit code at all.
-- A new install downloads **the server alone**, not the old combined package.
-  `artifacts.json` has named the split archives since 1.11.0, but nothing told
-  `fetch-sources.sh`, so it fell back to the address compiled into it: 1.6 GB
-  of server *and* desktop client, downloaded in full even by somebody who chose
-  the browser client and would never unpack a desktop client. It is 223 MB now,
-  and its checksum is verified.
-- The desktop client is fetched from its own archive. Left unset, the client
-  builder looked for a client inside the server files, which is where it used
-  to be and no longer is. The installer writes `M2_CLIENT_ARCHIVE_URL` from
-  `artifacts.json` -- and leaves it alone if you set it yourself.
+- The Windows installer no longer stops at the question about which clients to install.
+- A new install downloads only the server, about 220 MB instead of 1.6 GB.
+- The desktop client is fetched from its own download.
 
 ## 1.11.6 — 2026-08-12
 
-### Fixed
-
-- 1.11.5 stopped the admin panel from starting on a server with a domain. The
-  list of headers it hands waitress was comma-separated; waitress splits that
-  value on spaces, so the whole list arrived as one unrecognised name and it
-  refused to start -- and since the panel is the container's only process,
-  refusing to start is the container restarting for ever. The syntax is now
-  checked against waitress itself before release rather than assumed.
+- The admin panel starts again on servers that use a domain name.
 
 ## 1.11.5 — 2026-08-12
 
-### Fixed
-
-- The panel now really does know that nginx is in front of it. 1.11.3 told it
-  so, and it still made no difference, because the evidence never reached the
-  application: waitress deletes `X-Forwarded-*` headers it has not been told to
-  trust, and it had not been told. The panel's own handling of those headers --
-  which checks that they came from the proxy before believing a word -- was
-  correct and never ran once. Waitress is now told about the proxy, and it
-  consumes the headers itself: it applies them to the scheme, the host and the
-  client address, and takes them out. So the panel reads the setting instead of
-  looking for a header that is gone by then.
-
-  Two things were quietly wrong the whole time this was: **Play in Browser**
-  handed out the bridge's own port over plain `ws://`, which no browser allows
-  from an HTTPS page, and the gigabyte client download was streamed through
-  Python instead of being handed to nginx -- one download blocking the panel
-  for everyone else, which is exactly what that hand-off exists to prevent.
+- **Play in Browser** hands out a link that works on servers with HTTPS.
+- The client download is fast again and no longer blocks the panel while it runs.
 
 ## 1.11.4 — 2026-08-12
 
-### Fixed
-
-- Updating actually updates the browser client. The installer placed
-  `artifacts.json` -- the file that says which engine version an install should
-  have -- only when it was not already there, so every later run consulted the
-  pointer that shipped with the version being replaced and correctly concluded
-  there was nothing to do. Measured: a server ran the 1.11.3 installer to
-  completion, reported success, and kept engine 1.11.0. Both helper files are
-  refreshed every run now, and an existing copy is used only when neither the
-  checkout nor GitHub can be reached.
-- 1.11.3 could not write its nginx configuration. A comment added to the
-  `/play/` block contained a plain double quote, which ended the shell string
-  that block is built in; the rest was read as commands. `sh -n` cannot see
-  that -- it is valid syntax, just not the intended one -- so it passed every
-  check and failed on the server, leaving the bootstrap configuration in place
-  and HTTPS down until the installer was run again.
+- Updating now really does update the browser client.
+- The installer writes its web-server settings again.
 
 ## 1.11.3 — 2026-08-12
 
-> [!IMPORTANT]
-> This one needs browser-client engine **1.11.3**, which the installer fetches
-> by itself. Two of the fixes below are in the client's own files, not on your
-> server, so an install that keeps an older engine keeps the bugs.
-
-### Fixed
-
-- The browser client no longer stops at "starting…". `index.dev`, the pack list
-  the client writes to `/pack/index.dev` for `InitPacks` to read, was missing
-  from the engine archive: `webfs.js` gave up on the 404 and the game never
-  started. Nothing reported it as a fault -- a 404 is the correct answer about
-  a file nobody installed -- so the page simply sat there.
-- The browser client reaches a server named by a **domain**. It only ever
-  reached one named by an IP address: the address goes through `inet_addr()`,
-  which parses dotted quads and nothing else, so a name became `INADDR_NONE`
-  and the page dialled `wss://255.255.255.255/`. The page's WebSocket shim now
-  takes the host from the URL it was opened with. Resolving it instead would
-  have been wrong even if a browser could: a certificate is issued for a name.
-- **Play in Browser** hands out a working address behind HTTPS. The panel could
-  not tell that nginx was in front of it -- it runs in a container, and Docker
-  rewrites the source address, so the loopback test it used never matched. It
-  therefore named the bridge's own port and left the connection unencrypted,
-  and browsers block a `ws://` connection from an HTTPS page outright. The
-  installer now states the fact, because it is the only party that knows it.
-- A 404 under `/play/` is no longer cached, by anyone, for a year. The rule that
-  keeps data chunks forever -- correct, their names are content hashes -- was
-  attached to error responses too. One request that arrived while the client was
-  still installing taught the CDN that a chunk did not exist, permanently.
-  Measured on a live server: a 4.2 MB chunk present on disk, served as a cached
-  404. It presents as files missing from the game, not as a caching problem.
-
-### Changed
-
-- **Play in Browser** asks the page to keep 768 MB of game data in memory
-  instead of the page's own default of 96 MB. The client reads its data in
-  4.2 MB chunks, and a chunk it does not already hold is fetched with a
-  synchronous request that stops the frame -- the browser's own cache does not
-  help, because the bytes still have to be converted mid-frame. 96 MB holds 23
-  of the 420 chunks; 768 MB holds around 180, which is more than a session in
-  one region touches. Set `M2_BROWSER_CACHE_MB` in `.env` to change it.
-
-### Added
-
-- `linux-port/package-web-client.sh` builds both browser-client archives and
-  prints the lines `artifacts.json` needs. The engine's contents are a written
-  list, not a pattern, and a missing file stops the run: the first archive was
-  packed by hand and was one file short, which is the `index.dev` bug above.
+- The browser client starts instead of stopping at "starting…".
+- The browser client reaches servers that use a domain name.
+- **Play in Browser** works on servers with HTTPS.
+- The game stutters far less in the browser.
+- A file that was briefly missing is no longer remembered as missing for a year.
 
 ## 1.11.2 — 2026-08-12
 
-### Fixed
-
-- The panel shows the **Play in Browser** card again. It looked for the browser
-  client at `browser/index.html` while the installer puts it at
-  `browser/current/index.html` -- the same one-level-too-high mistake 1.11.1
-  fixed in nginx, in the second place that had its own copy of the path. The
-  panel now looks in `browser/current` first and falls back to `browser`, so a
-  client placed there by hand keeps working.
-- That check is made per request rather than once at startup. Installing the
-  browser client into a running panel now shows the card immediately instead of
-  after the next restart.
+- The **Play in Browser** card appears in the panel again.
 
 ## 1.11.1 — 2026-08-12
 
-### Fixed
-
-- nginx serves `/play/` from `browser/current`, the symlink to the version being
-  served, rather than from its parent -- which held only the version
-  directories, so every request under `/play/` was a 404 while the files sat one
-  level down.
-- The fetcher mounts its script and `artifacts.json` from beside
-  `docker-compose.yml` rather than from above it. Those two live one and two
-  levels up in a checkout, and an install directory is a copy of that one
-  folder -- and Docker answers a missing bind source by creating an empty
-  directory, so the fetcher started with a directory where its script should
-  have been and did nothing, silently.
-- The fetcher's script and pointer file are placed beside `docker-compose.yml`
-  on every run, downloaded if no checkout is at hand, not only when the build
-  context is restaged. A server already at
-  the published version skips restaging, so on those the two files never
-  arrived and the browser client could not be fetched.
-- The installer checks that a browser client actually arrived instead of
-  believing the fetcher's exit code. One that started without its script
-  reported success while nothing was installed, and the installer repeated that
-  to the operator.
-
-  Four faults between them, none of which announced itself: a server that
-  chose the browser client got no browser client, and the installer said it
-  had installed one.
+- A server that chose the browser client now actually gets one.
 
 ## 1.11.0 — 2026-08-11
 
-> [!TIP]
-> ## **The Web Client is now available to install.**
->
-> **Your players can play in the browser — no download, no installation, just a
-> link.** The installer asks which clients you want and fetches what it needs:
-> browser only, desktop only, or both. An existing server keeps working
-> untouched; on your next update you are simply offered the browser client.
+# 🌍 Play in the browser — no download
+
+## Your players click a link and they are in the game. No client to download, no installation, nothing to set up on their side.
+
+The installer asks which clients you want to offer — browser, desktop, or both
+— and fetches only what you chose. Servers installed before this keep working
+exactly as they are; the browser client is simply offered on your next update.
 
 ### Added
 
-- **The installer offers a choice of clients.** On a first install: browser
-  only, desktop only, or both, with what each costs on disk. On an update
-  nothing is asked when both are already installed; when one is missing it is
-  offered, because that is the only moment you find out the other way exists.
-- Only what you chose is downloaded. A browser-only server never fetches the
-  1.29 GB desktop client, and a desktop-only server never fetches the 1.75 GB
-  browser corpus.
-- **The browser client is fetched, verified and installed for you** — no more
-  placing files on a volume by hand. `webclient-fetcher` is a task container in
-  the `webclient` profile: it runs, writes to the panel's volume, and exits.
-- `artifacts.json` at the top of the repository says where the five archives
-  come from and what they must hash to. The engine's URL is derived from its
-  version, so publishing a new one is: attach the file to the release, change
-  two lines here.
-- The browser client is two archives on purpose: the engine (17.6 MB) and the
-  game data (1.75 GB). Nearly every fix touches only the engine, so an update
-  costs 17.6 MB rather than 1.75 GB.
-- Nothing is ever written over. Each version is unpacked beside what is running,
-  checked, and only then is `current` moved — a rename, which either happens or
-  does not. There is no instant at which a player is handed half an engine, and
-  a rollback is one symlink.
-- **A WebSocket bridge**, so a browser can reach a game server that speaks TCP.
-  It is the `wsbridge` service, it is in a compose profile, and
-  `docker compose up -d` does not start it or build it.
-- The bridge speaks the browser client's own protocol: one port, with the
-  destination in the path as `/to/<host>:<port>`, and a `/ping` the client's
-  connection dialog checks before it will start.
-- It only ever connects to the game container. The host named in the URL is
-  read, logged and discarded; the port must be one the game runs on. The db
-  core and the cores' peer-to-peer ports are refused even when named
-  explicitly.
-- **Play in the browser** on the panel's front page, with the client served
-  from `/play/`. It appears only when `M2_BROWSER_PLAY=1`, a browser client is
-  on the panel's volume, and the bridge answers.
-- The button carries the address in the link the client expects
-  (`?serverHost=…&serverPort=…`), so the page goes straight into the game
-  instead of asking the player for an address.
-- nginx serves `/play/` off the panel's volume directly, with the cache rules
-  the client needs — content-addressed blobs kept for a year, `manifest.bin`
-  never kept. It is 1.7 GB in 421 files.
-- With a domain, nginx routes `/to/` and `/ping` to the bridge on port 443. The
-  client cannot be given a path and an HTTPS page cannot open a plain
-  WebSocket, so this is the only arrangement that works behind TLS.
-- `M2_BROWSER_PLAY`, `M2_BRIDGE_PORT`, `M2_BRIDGE_BIND_ADDRESS`,
-  `M2_BRIDGE_TRUST_PROXY`, `M2_BRIDGE_HOST_ALIASES`,
-  `M2_BRIDGE_MAX_CONNECTIONS`, `M2_BRIDGE_MAX_PER_IP` and `M2_BRIDGE_ORIGINS`
-  in `.env`.
-- Both installers start the bridge when `M2_BROWSER_PLAY=1` and stop it when it
-  is set back to 0. On Linux the firewall step opens its port only on a server
-  without a domain.
-- The browser client itself is not part of this project — it carries game data,
-  which this repository never does. It is fetched from its own archives, whose
-  addresses and checksums are in `artifacts.json`.
+- Play in the browser: a link is all a player needs.
+- The installer asks which clients you want and downloads only those.
+- The browser client is installed for you, checked, and kept up to date.
+- An update to the browser client is a small download, not the whole game again.
+- Updating it cannot leave a player with half a client, and it can be undone.
+- **Play in Browser** appears on the panel's front page once everything is ready.
 
 ## 1.10.0 — 2026-08-11
 
-### Fixed
-
-- The item search box works on a local install. It answered every query with
-  an empty list there, so typing produced no results at all.
-- The item search works in browsers without arrow-function support. It was the
-  only script in the panel that used them, and a browser that cannot read them
-  skips the whole block — typing then did nothing whatsoever.
-- The item search says so when it cannot reach the server, instead of looking
-  like an empty result.
-- Setting a level above the server's cap now says so. The server silently
-  ignored it and reported success, so the level stayed as it was while the
-  character kept the skill and stat points from the attempt.
-
-### Changed
-
-- The highest character level is 120 by default, which is as high as the game
-  goes. Servers installed before this keep the value in their `.env`; change
-  `M2_MAX_LEVEL` there and restart to raise it.
-- The "set level" box offers exactly what your server accepts.
-- **Game language** and **Admin passphrase** have moved to the bottom of the
-  admin page, under a heading of their own. They set up the server rather
-  than run it, and both affect everyone on it.
+- The item search works on a local install and in older browsers, and says so when it cannot reach the server.
+- Setting a level above what your server allows now tells you, instead of quietly doing nothing.
+- The highest character level is 120 by default. Change `M2_MAX_LEVEL` in `.env` to raise it.
+- **Game language** and **Admin passphrase** moved to the bottom of the admin page, under their own heading.
 
 ---
 
