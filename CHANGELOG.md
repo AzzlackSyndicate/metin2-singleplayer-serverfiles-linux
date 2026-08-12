@@ -17,6 +17,10 @@ every version here.
 
 ---
 
+## 1.11.11 — 2026-08-12
+
+- The "What is this?" box on the front page says you can play in the browser — on servers that offer it — and no longer explains the panel to people who are looking for the game.
+
 ## 1.11.10 — 2026-08-12
 
 - The front page puts the game account first, then the ways to play in one frame: **JETZT IM BROWSER SPIELEN**, a line saying **ODER**, and the download with its steps.

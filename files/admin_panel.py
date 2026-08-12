@@ -1693,9 +1693,11 @@ T = {
  "about_hobby":  {"en":"This is a hobby project. Nobody earns anything from it, there is nothing to buy, and there never will be.",
                   "de":"Das hier ist ein Hobbyprojekt. Niemand verdient daran etwas, es gibt nichts zu kaufen, und das wird auch so bleiben.",
                   "tr":"Burası bir hobi projesi. Kimse bundan para kazanmıyor, satın alınacak bir şey yok ve olmayacak da."},
- "about_simple": {"en":"Everything is deliberately kept as simple as possible — this panel included. Plain pages, big buttons, and an explanation on almost everything: hold your mouse over a button or a field and it tells you what it does.",
-                  "de":"Alles ist bewusst so einfach wie möglich gehalten — auch dieses Panel. Schlichte Seiten, große Schaltflächen und zu fast allem eine Erklärung: Halte die Maus über eine Schaltfläche oder ein Feld, dann steht dort, was sie tut.",
-                  "tr":"Her şey bilerek olabildiğince basit tutuldu — bu panel de dahil. Sade sayfalar, büyük düğmeler ve neredeyse her şey için bir açıklama: farenle bir düğmenin veya alanın üzerinde bekle, ne işe yaradığını yazar."},
+ # Only shown when this server really has a browser client -- a server that
+ # offers the download alone must not promise a link that is not there.
+ "about_web":    {"en":"You can play straight in your browser — one click, nothing to download and nothing to install. If you would rather have the proper client, download it instead: same server, same account, and a character made in one is there in the other.",
+                  "de":"Spielen kannst du direkt im Browser — ein Klick, kein Download, keine Installation. Wer lieber den richtigen Client möchte, lädt ihn herunter: derselbe Server, dasselbe Konto, und ein Charakter aus dem einen ist auch im anderen da.",
+                  "tr":"Doğrudan tarayıcında oynayabilirsin — tek tık, indirme yok, kurulum yok. Gerçek istemciyi tercih edersen onu indir: aynı sunucu, aynı hesap; birinde yaptığın karakter diğerinde de vardır."},
  "about_uptime": {"en":"Characters live in this server's own database and nowhere else — nobody has a second copy, and nothing is sent anywhere. Which also means how long this world lasts is entirely up to whoever runs it.",
                   "de":"Charaktere liegen in der Datenbank dieses Servers und sonst nirgends — niemand hat eine zweite Kopie, und es wird nichts irgendwohin übertragen. Das heißt aber auch: Wie lange es diese Welt gibt, entscheidet allein, wer den Server betreibt.",
                   "tr":"Karakterler yalnızca bu sunucunun kendi veritabanında durur — kimsede ikinci bir kopya yok ve hiçbir yere bir şey gönderilmiyor. Bu aynı zamanda şu demek: bu dünyanın ne kadar süreceğine yalnızca sunucuyu işleten kişi karar verir."},
@@ -2746,7 +2748,7 @@ setInterval(function(){
 <h3>ℹ️ {{t('about_title')}}</h3>
 <p>{{t('about_goal')}}</p>
 <p>{{t('about_hobby')}}</p>
-<p>{{t('about_simple')}}</p>
+{% if browser_ready %}<p>{{t('about_web')}}</p>{% endif %}
 <p>{{t('about_uptime')}}</p>
 <p>{{t('about_oss')}}</p>
 {% if contact %}<p>{{t('about_contact')}} <a href="mailto:{{contact}}">{{contact}}</a>.</p>{% endif %}
