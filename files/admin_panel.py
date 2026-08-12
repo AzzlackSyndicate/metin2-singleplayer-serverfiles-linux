@@ -819,6 +819,23 @@ def browser_play_ready():
     """
     return browser_client_ready() and bridge_ports() is not None
 
+def behind_proxy():
+    """Did this request arrive through the reverse proxy?
+
+    Asked of the SETTING as well as of the request, because by the time this
+    runs the evidence may be gone. waitress removes the X-Forwarded-* headers
+    it does not trust -- clear_untrusted_proxy_headers is on by default -- and
+    when the installer has told it to trust the proxy it CONSUMES them instead,
+    applying them to the scheme, the host and the client address and then
+    taking them out of the environment. Either way the app sees no header.
+    That is what made this look like a panel bug for so long: the panel's own
+    X-Forwarded handling was correct and never ran, because nothing reached it.
+
+    _LocalProxyFix still covers the case with no container and no trusted
+    proxy, where the headers arrive untouched -- hence the two tests.
+    """
+    return bool(TRUST_PROXY or request.environ.get("panel.via_proxy"))
+
 def bridge_endpoint():
     """(host, port, tls) for THIS request -- what the page must be told.
 
@@ -828,7 +845,7 @@ def bridge_endpoint():
     own port, and the page is plain HTTP anyway.
     """
     host = request.host.split(":")[0]
-    if request.environ.get("panel.via_proxy"):
+    if behind_proxy():
         # The port the visitor actually reached, which is the one their browser
         # will dial again -- not the panel's internal one.
         if ":" in request.host:
@@ -3725,7 +3742,7 @@ def download():
     # through Flask's single-threaded development server blocks the panel for
     # everyone else for as long as the download runs. The header is only obeyed
     # by nginx, so it is set solely for requests that actually arrived through it.
-    if request.environ.get("panel.via_proxy"):
+    if behind_proxy():
         resp = app.response_class()
         resp.headers["X-Accel-Redirect"] = "/_client_zip"
         resp.headers["Content-Type"] = "application/zip"

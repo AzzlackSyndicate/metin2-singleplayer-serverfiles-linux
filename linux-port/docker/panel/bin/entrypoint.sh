@@ -268,11 +268,43 @@ cd /opt/panel
 chown panel:panel "$CONF_PATH" 2>/dev/null || true
 chown -R panel:panel "$DATA_DIR" 2>/dev/null || true
 
+# ── the reverse proxy, if the installer says there is one ────────────────────
+#
+# waitress does not pass X-Forwarded-* through. Its clear_untrusted_proxy_headers
+# is on by default, so unless it is told which proxy to trust it DELETES those
+# headers before the application runs -- and the application's own careful
+# handling of them, which checks that they came from nginx before believing a
+# word, therefore never saw one. Nothing reported it. The panel simply behaved
+# as though every visitor had reached it directly: it handed the browser client
+# the bridge's own port over plain ws:// on an HTTPS page, which browsers block,
+# and it sent the gigabyte client download through Python instead of handing it
+# to nginx.
+#
+# Told to trust the proxy, waitress does the opposite: it APPLIES the headers to
+# the scheme, the host and the client address, and removes them afterwards. So
+# the app cannot tell from the request either way, and reads M2PANEL_TRUST_PROXY
+# instead -- see behind_proxy() in admin_panel.py.
+#
+# Trusting every source is safe here and only here: the installer sets this in
+# the arm that also publishes the panel on 127.0.0.1 alone, so nothing but nginx
+# can open a connection to it. M2_PANEL_TRUSTED_PROXY narrows it to one address
+# for anyone who arranges things differently.
+# Built as positional parameters rather than as a string, because the default
+# value is `*' -- a string would be word-split AND glob-expanded on the way to
+# exec, and `*' is exactly the character that has an opinion about that.
+set -- --host="$M2_PANEL_BIND" \
+       --port="$M2_PANEL_PORT" \
+       --threads="$M2_PANEL_THREADS"
+case "${M2PANEL_TRUST_PROXY:-0}" in
+    1|true|yes|on|TRUE|YES|ON)
+        set -- "$@" \
+            "--trusted-proxy=${M2_PANEL_TRUSTED_PROXY:-*}" \
+            "--trusted-proxy-headers=x-forwarded-for,x-forwarded-proto,x-forwarded-host"
+        log "trusting the reverse proxy at ${M2_PANEL_TRUSTED_PROXY:-any address}"
+        ;;
+esac
+
 log "serving on ${M2_PANEL_BIND}:${M2_PANEL_PORT} with ${M2_PANEL_THREADS} threads"
 
 exec setpriv --reuid=panel --regid=panel --init-groups --inh-caps=-all -- \
-  python3 -m waitress \
-    --host="$M2_PANEL_BIND" \
-    --port="$M2_PANEL_PORT" \
-    --threads="$M2_PANEL_THREADS" \
-    admin_panel:app
+  python3 -m waitress "$@" admin_panel:app

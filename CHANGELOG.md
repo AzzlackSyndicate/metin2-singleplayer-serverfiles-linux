@@ -17,6 +17,26 @@ every version here.
 
 ---
 
+## 1.11.5 — 2026-08-12
+
+### Fixed
+
+- The panel now really does know that nginx is in front of it. 1.11.3 told it
+  so, and it still made no difference, because the evidence never reached the
+  application: waitress deletes `X-Forwarded-*` headers it has not been told to
+  trust, and it had not been told. The panel's own handling of those headers --
+  which checks that they came from the proxy before believing a word -- was
+  correct and never ran once. Waitress is now told about the proxy, and it
+  consumes the headers itself: it applies them to the scheme, the host and the
+  client address, and takes them out. So the panel reads the setting instead of
+  looking for a header that is gone by then.
+
+  Two things were quietly wrong the whole time this was: **Play in Browser**
+  handed out the bridge's own port over plain `ws://`, which no browser allows
+  from an HTTPS page, and the gigabyte client download was streamed through
+  Python instead of being handed to nginx -- one download blocking the panel
+  for everyone else, which is exactly what that hand-off exists to prevent.
+
 ## 1.11.4 — 2026-08-12
 
 ### Fixed
