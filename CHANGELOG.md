@@ -17,6 +17,10 @@ every version here.
 
 ---
 
+## 1.12.1 — 2026-08-12
+
+- **[UNINSTALL.md](UNINSTALL.md)** — how to remove an installation completely and put a fresh one in its place. It says which of the five places an installation lives in can be thrown away freely, which one holds every character on your server, and how to save that one first. It also lists the three cheaper things to try before wiping anything.
+
 ## 1.12.0 — 2026-08-12
 
 ### Added

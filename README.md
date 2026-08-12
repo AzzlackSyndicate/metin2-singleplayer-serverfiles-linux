@@ -69,7 +69,8 @@ scripts fetch them for you, when the share they come from is willing.
 ## Getting started
 
 The step-by-step version for someone who has never done this is
-**[TUTORIAL.md](TUTORIAL.md)**. The short version:
+**[TUTORIAL.md](TUTORIAL.md)**, and if you ever want to wipe the machine and
+begin again, **[UNINSTALL.md](UNINSTALL.md)**. The short version:
 
 ### Linux — one command
 
@@ -142,6 +143,8 @@ linux-port/             THE PORT — write-ups, the patch, then packaging
   docker/                 the compose stack (its own README, its own .env.example)
 
 LICENSE  NOTICE.md  CONTRIBUTING.md  TUTORIAL.md
+UPDATING.md             taking a new version
+UNINSTALL.md            removing it completely, and starting over
 ```
 
 **`files/` is not a leftover.** The Docker build copies out of it —
