@@ -81,6 +81,10 @@ M2_LOCAL_CONTEXT="${M2_LOCAL_CONTEXT:-}"
 M2_SRC_ARCHIVE="${M2_SRC_ARCHIVE:-}"
 M2_SRC_REFERENCE_DIR="${M2_SRC_REFERENCE_DIR:-}"
 M2_SRC_URL="${M2_SRC_URL:-}"
+# The same server archive elsewhere, filled from artifacts.json below and tried
+# only after M2_SRC_URL has already failed -- a MEGA "509 over quota" above all.
+M2_SRC_URL_FALLBACK="${M2_SRC_URL_FALLBACK:-}"
+M2_SRC_URL_FALLBACK2="${M2_SRC_URL_FALLBACK2:-}"
 M2_SRC_CACHE="${M2_SRC_CACHE:-/var/cache/m2src}"
 
 # Where this script is, if it is a file at all. Run as `curl ... | sh' it is
@@ -907,6 +911,14 @@ run_fetch_sources() {
         fi
     fi
 
+    # The same archive somewhere else, for when MEGA answers "509 over quota".
+    # Passed even when the operator named their own --source-url: a fallback is
+    # only ever reached after that link has already failed, so it can do no
+    # harm and it saves the person a wait of hours.
+    M2_SRC_URL_FALLBACK=${M2_SRC_URL_FALLBACK:-$(pointer_link src_server_url_fallback)}
+    M2_SRC_URL_FALLBACK2=${M2_SRC_URL_FALLBACK2:-$(pointer_link src_server_url_fallback2)}
+    export M2_SRC_URL_FALLBACK M2_SRC_URL_FALLBACK2
+
     _fs="$REPO_DIR/linux-port/fetch-sources.sh"
     [ -f "$_fs" ] || die "$_fs is missing from the checkout. That file is what
   turns a checkout into a buildable server; without it there is nothing to do."
@@ -1576,6 +1588,16 @@ write_env() {
             esac
         fi
     fi
+    # The same archive somewhere else. Refreshed every run rather than only
+    # when empty, so an installation follows whatever artifacts.json names now
+    # instead of keeping a link that has since been retired.
+    for _fbk in FALLBACK FALLBACK2; do
+        case "$_fbk" in
+            FALLBACK)  _fbv=$(pointer_link src_client_url_fallback) ;;
+            FALLBACK2) _fbv=$(pointer_link src_client_url_fallback2) ;;
+        esac
+        env_set "$_env" "M2_CLIENT_ARCHIVE_URL_$_fbk" "$_fbv"
+    done
     _bp=$(env_get "$_env" M2_BRIDGE_PORT || true)
     [ -n "$_bp" ] && BRIDGE_PORT="$_bp"
     env_set "$_env" M2_BRIDGE_PORT "$BRIDGE_PORT"

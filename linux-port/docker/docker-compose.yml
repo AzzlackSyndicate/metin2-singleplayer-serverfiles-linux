@@ -384,6 +384,9 @@ services:
       # Where to get the archive, and what to do when that link stops working.
       # Empty means "the link these server files ship with".
       M2_CLIENT_ARCHIVE_URL: "${M2_CLIENT_ARCHIVE_URL:-}"
+      # The same archive elsewhere, tried when MEGA answers "509 over quota".
+      M2_CLIENT_ARCHIVE_URL_FALLBACK: "${M2_CLIENT_ARCHIVE_URL_FALLBACK:-}"
+      M2_CLIENT_ARCHIVE_URL_FALLBACK2: "${M2_CLIENT_ARCHIVE_URL_FALLBACK2:-}"
       M2_CLIENT_ARCHIVE: "${M2_CLIENT_ARCHIVE:-}"
       M2_CLIENT_ARCHIVE_SHA256: "${M2_CLIENT_ARCHIVE_SHA256:-}"
 

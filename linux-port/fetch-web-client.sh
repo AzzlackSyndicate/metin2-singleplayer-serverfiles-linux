@@ -191,6 +191,8 @@ DATA_VERSION=$(json_get data_version "$POINTER")
 DATA_URL=$(json_get data_url "$POINTER")
 DATA_SHA=$(json_get data_sha256 "$POINTER")
 DATA_MB=$(json_get data_size_mb "$POINTER")
+DATA_FALLBACK=$(json_get data_url_fallback "$POINTER")
+DATA_FALLBACK2=$(json_get data_url_fallback2 "$POINTER")
 
 [ -n "$ENGINE_VERSION" ] && [ -n "$DATA_VERSION" ] || die 9 \
     "$POINTER is missing engine_version or data_version."
@@ -204,6 +206,19 @@ if [ -z "$ENGINE_URL" ] && [ -n "$ENGINE_URL_TPL" ]; then
     ENGINE_URL=$(printf '%s' "$ENGINE_URL_TPL" | sed "s|{version}|$ENGINE_VERSION|g")
 fi
 [ -n "$DATA_URL_OVERRIDE" ] && DATA_URL="$DATA_URL_OVERRIDE"
+
+# The corpus is 1.75 GB from an anonymous MEGA share, which is exactly the
+# thing that answers "509 over quota" when somebody else has been downloading
+# it all afternoon. Everything after the first entry is the same archive
+# somewhere else, checked against the same sha256. Placeholders are dropped
+# here rather than at the download, so an empty fallback simply is not a list
+# entry; --data-url replaces the lot, because somebody who names a link means
+# that link.
+DATA_URLS=""
+for _u in "$DATA_URL" "$DATA_FALLBACK" "$DATA_FALLBACK2"; do
+    url_is_set "$_u" && DATA_URLS="${DATA_URLS:+$DATA_URLS }$_u"
+done
+[ -n "$DATA_URL_OVERRIDE" ] && DATA_URLS="$DATA_URL_OVERRIDE"
 
 # The compatibility rule, checked here as well as in the panel. The engine names
 # the corpus it was built against; if the pointer file offers a different one it
@@ -375,9 +390,10 @@ if [ "$need_data" = "0" ] && [ "$need_engine" = "1" ]; then
     note "  That is what the two archives are for."
 fi
 
-if [ "$need_data" = "1" ] && ! url_is_set "$DATA_URL"; then
+if [ "$need_data" = "1" ] && [ -z "$DATA_URLS" ]; then
     die 8 "The MEGA link for Reference_WebClientData.zip has not been filled in yet." \
         "  artifacts.json still says:  data_url = $DATA_URL" \
+        "  and it names no fallback either." \
         "" \
         "  Put the share link in that file, or pass it once:" \
         "      --data-url 'https://mega.nz/file/...'" \
@@ -463,12 +479,14 @@ fetch_to() { # fetch_to URL DESTFILE LABEL  -- leaves DESTFILE or fails
         _rc=$?
         [ -n "$_cfg" ] && rm -f "$_cfg"
         _got=$(find "$_wd" -maxdepth 1 -type f -size +1M ! -name '.megatmp.*' ! -name '*.part' 2>/dev/null | head -1)
+        # Return 9 rather than 1, and say only what happened: the caller knows
+        # whether there is another copy to try, and the advice to wait a few
+        # hours is wrong -- and discouraging -- if the next line of the list
+        # fetches the same archive in a minute.
         if [ -z "$_got" ] && grep -q '509\|over quota' "$_log" 2>/dev/null; then
-            warn "MEGA answered '509 over quota'."
-            warn "That is the share's daily allowance, not a broken link. It clears"
-            warn "by itself, usually within a few hours -- run the installer again."
-            warn "Or sign in with your own MEGA account: --mega-user / --mega-pass."
-            return 1
+            warn "MEGA answered '509 over quota' -- that is the share's daily"
+            warn "allowance being spent, not a broken link."
+            return 9
         fi
         if [ -z "$_got" ] && [ "$_rc" != "124" ]; then
             _legacy=$(mega_legacy_url "$_u")
@@ -497,8 +515,8 @@ fetch_to() { # fetch_to URL DESTFILE LABEL  -- leaves DESTFILE or fails
 # is doing as it goes, and a function that both narrates and returns a value on
 # stdout ends up handing the caller its own narration.
 OBTAINED=""
-obtain() { # obtain URL WANTSHA CACHENAME LABEL -> OBTAINED
-    _u="$1"; _want="$2"; _name="$3"; _label="$4"
+obtain() { # obtain URLS WANTSHA CACHENAME LABEL -> OBTAINED
+    _urls="$1"; _want="$2"; _name="$3"; _label="$4"
     _f="$CACHE/$_name"
     OBTAINED=""
 
@@ -511,26 +529,58 @@ obtain() { # obtain URL WANTSHA CACHENAME LABEL -> OBTAINED
         rm -f "$_f"
     fi
 
-    note "  downloading $_name"
-    note "    from $_u"
-    fetch_to "$_u" "$_f" "$_label" || { rm -f "$_f"; return 4; }
-    note "  got $(human "$(fsize "$_f")")"
+    # One archive, several places it might be. The sha256 is checked inside the
+    # loop rather than after it, so a mirror that has gone stale is treated the
+    # same as one that would not answer at all -- the next copy gets its turn,
+    # and the only file that can end up in the cache is the right one.
+    _quota=0; _tried=0; _rc=4
+    for _u in $_urls; do
+        url_is_set "$_u" || continue
+        _tried=$((_tried + 1))
+        [ "$_tried" -gt 1 ] && note "  trying another copy of the same archive"
 
-    if [ -n "$_want" ] && sha_is_set "$_want"; then
-        _have=$(sha_of "$_f")
-        if [ "$_have" != "$_want" ]; then
+        note "  downloading $_name"
+        note "    from $_u"
+        fetch_to "$_u" "$_f" "$_label"
+        _rc=$?
+        if [ "$_rc" != 0 ]; then
+            [ "$_rc" = 9 ] && _quota=1
             rm -f "$_f"
-            warn "sha256 mismatch on $_name"
-            warn "  expected $_want"
-            warn "  got      ${_have:-nothing}"
-            return 5
+            continue
         fi
-        ok "sha256 verified"
-    else
-        warn "no sha256 for $_name in artifacts.json -- it was not verified"
+        note "  got $(human "$(fsize "$_f")")"
+
+        if [ -n "$_want" ] && sha_is_set "$_want"; then
+            _have=$(sha_of "$_f")
+            if [ "$_have" != "$_want" ]; then
+                rm -f "$_f"
+                warn "sha256 mismatch on $_name"
+                warn "  expected $_want"
+                warn "  got      ${_have:-nothing}"
+                _rc=5
+                continue
+            fi
+            ok "sha256 verified"
+        else
+            warn "no sha256 for $_name in artifacts.json -- it was not verified"
+        fi
+        OBTAINED="$_f"
+        return 0
+    done
+
+    if [ "$_tried" = 0 ]; then
+        warn "there is no usable link for $_name in $POINTER"
+        return 4
     fi
-    OBTAINED="$_f"
-    return 0
+    # Only now is the wait real: every copy has been tried.
+    if [ "$_quota" = 1 ]; then
+        warn "Every copy of $_name is out of reach at the moment."
+        warn "MEGA's allowance clears by itself, usually within a few hours."
+        warn "Run this again then, or sign in with a MEGA account of your own"
+        warn "(--mega-user / --mega-pass), which charges the transfer to you."
+    fi
+    [ "$_rc" = 9 ] && _rc=4
+    return "$_rc"
 }
 
 # -----------------------------------------------------------------------------
@@ -569,7 +619,7 @@ if [ "$need_engine" = "1" ]; then
 fi
 
 if [ "$need_data" = "1" ]; then
-    obtain "$DATA_URL" "$DATA_SHA" "data-$DATA_VERSION.zip" data || exit $?
+    obtain "$DATA_URLS" "$DATA_SHA" "data-$DATA_VERSION.zip" data || exit $?
     unpack_into "$OBTAINED" "$DATA_DIR" manifest.bin
     _rc=$?
     [ "$_rc" = "0" ] || exit "$_rc"

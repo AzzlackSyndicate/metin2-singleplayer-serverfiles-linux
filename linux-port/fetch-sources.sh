@@ -49,6 +49,11 @@
 #      --url URL             M2_SRC_URL              where to download from when
 #                                                    neither of the above is
 #                                                    given.  MEGA or direct.
+#      --url-fallback URL    M2_SRC_URL_FALLBACK     the same archive somewhere
+#                                                    else, tried when the one
+#                                                    above will not come -- a
+#                                                    MEGA "509 over quota"
+#                                                    above all.
 #      --cache DIR           M2_SRC_CACHE            downloads + work
 #                                                    (default /var/cache/m2src)
 #      --tree DIR            M2_SRC_TREE             staged tree
@@ -133,6 +138,11 @@ DEFAULT_URL='https://mega.nz/file/W6xnUZTB#SMbCxbo22RHrjtgWa5ohsF1uclDbNpNhwfhXi
 ARCHIVE_GIVEN="${M2_SRC_ARCHIVE:-}"
 REFDIR="${M2_SRC_REFERENCE_DIR:-}"
 URL="${M2_SRC_URL:-$DEFAULT_URL}"
+# The same archive somewhere else, tried in order when the one above will not
+# come -- above all when MEGA answers "509 over quota", which is a wait of
+# hours through nobody's fault. install.sh fills these from artifacts.json.
+URL_FALLBACK="${M2_SRC_URL_FALLBACK:-}"
+URL_FALLBACK2="${M2_SRC_URL_FALLBACK2:-}"
 CACHE="${M2_SRC_CACHE:-/var/cache/m2src}"
 TREE="${M2_SRC_TREE:-}"
 WANT_SHA="${M2_SRC_SHA256:-}"
@@ -155,6 +165,7 @@ while [ $# -gt 0 ]; do
         --archive)        ARCHIVE_GIVEN="${2:-}"; shift 2 ;;
         --reference-dir)  REFDIR="${2:-}";        shift 2 ;;
         --url)            URL="${2:-}";           shift 2 ;;
+        --url-fallback)   URL_FALLBACK="${2:-}";  shift 2 ;;
         --cache)          CACHE="${2:-}";         shift 2 ;;
         --tree)           TREE="${2:-}";          shift 2 ;;
         --sha256)         WANT_SHA="${2:-}";      shift 2 ;;
@@ -394,9 +405,13 @@ download() { # download URL DIR
         fi
         _rc=$?
         [ -n "$_mega_cfg" ] && rm -f "$_mega_cfg"
+        # 9, not 1: the caller may have another copy of this archive to try,
+        # and telling somebody to come back in a few hours is wrong -- and
+        # discouraging -- when the next line of the list will fetch it now.
+        # The advice is printed once, by the caller, after everything failed.
         if grep -q '509\|over quota' "$_dlog" 2>/dev/null && [ -z "$(finished_archive "$_d")" ]; then
-            quota_advice
-            return 1
+            warn "MEGA answered '509 over quota' -- the share's daily allowance."
+            return 9
         fi
         # megatools exits 0 on a link it would not even try. Only a file counts.
         [ -n "$(finished_archive "$_d")" ] && return 0
@@ -578,12 +593,35 @@ acquire() {
     done
 
     # 4. Download.
-    [ -n "$URL" ] || { dead_link_advice; die 4 "There is no URL to download from."; }
+    [ -n "$URL$URL_FALLBACK$URL_FALLBACK2" ] || { dead_link_advice; die 4 "There is no URL to download from."; }
     check_space "$MIN_FREE_MB" "$CACHE" "downloading and unpacking the server files"
     note "  downloading the server files. This is about 1.7 GB and takes a"
     note "  while -- let it run. Interrupting is safe: it resumes."
-    note "  from: $URL"
-    download "$URL" "$ARCHIVE_DIR" || { dead_link_advice; die 4 "Could not download the server files."; }
+
+    # One archive, up to three places it might be. A half-finished MEGA
+    # transfer is thrown away before the next place is asked, because
+    # `.megatmp.*' is resume state for one particular link and would otherwise
+    # be mistaken for progress against the next one.
+    _tried=0; _quota=0; _have=0
+    for _u in $URL $URL_FALLBACK $URL_FALLBACK2; do
+        case "$_u" in https://*|http://*) ;; *) continue ;; esac
+        _tried=$((_tried + 1))
+        if [ "$_tried" -gt 1 ]; then
+            note ""
+            note "  trying another copy of the same archive"
+            find "$ARCHIVE_DIR" -maxdepth 1 -name '.megatmp.*' -exec rm -f {} + 2>/dev/null || true
+        fi
+        note "  from: $_u"
+        download "$_u" "$ARCHIVE_DIR"
+        _rc=$?
+        if [ "$_rc" = 0 ]; then URL="$_u"; _have=1; break; fi
+        [ "$_rc" = 9 ] && _quota=1
+    done
+    if [ "$_have" != 1 ]; then
+        [ "$_quota" = 1 ] && quota_advice
+        dead_link_advice
+        die 4 "Could not download the server files."
+    fi
 
     _got=$(finished_archive "$ARCHIVE_DIR")
     [ -n "$_got" ] || { dead_link_advice; die 4 "The download ended but no archive is in $ARCHIVE_DIR."; }

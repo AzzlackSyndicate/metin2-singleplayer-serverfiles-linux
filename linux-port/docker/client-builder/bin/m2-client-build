@@ -78,6 +78,10 @@ AUTH_PORT_WANT="${M2_CLIENT_AUTH_PORT:-${M2_AUTH_PORT:-11000}}"
 SERVER_NAME_WANT="${M2_CLIENT_SERVER_NAME:-}"
 
 ARCHIVE_URL="${M2_CLIENT_ARCHIVE_URL:-}"
+# The same archive somewhere else, tried in turn when the one above will not
+# come. install.sh and install.ps1 fill these from artifacts.json.
+ARCHIVE_URL_FALLBACK="${M2_CLIENT_ARCHIVE_URL_FALLBACK:-}"
+ARCHIVE_URL_FALLBACK2="${M2_CLIENT_ARCHIVE_URL_FALLBACK2:-}"
 ARCHIVE_GIVEN="${M2_CLIENT_ARCHIVE:-}"
 ARCHIVE_SHA="${M2_CLIENT_ARCHIVE_SHA256:-}"
 
@@ -580,21 +584,40 @@ acquire_archive() { # -> ARCHIVE
         rm -f "$_cached" "$META"
     fi
 
-    # 4. Fetch it.
-    _url="$ARCHIVE_URL"
-    [ -n "$_url" ] || _url="${PACK_URL:-}"
-    [ -n "$_url" ] || { dead_link_advice; die "There is no download link to try (M2_CLIENT_ARCHIVE_URL is empty and these server files define no PACK_URL)."; }
+    # 4. Fetch it. One archive, several places it might be: each fallback is
+    # the same file elsewhere, which is what turns MEGA's "509 over quota" --
+    # somebody else's daily allowance, spent -- from a wait of hours into a
+    # wait of seconds. Anything that is not a link is skipped here, so an
+    # unfilled setting simply is not an entry in the list.
+    _dlurls=""
+    for _dlc in "$ARCHIVE_URL" "$ARCHIVE_URL_FALLBACK" "$ARCHIVE_URL_FALLBACK2" "${PACK_URL:-}"; do
+        case "$_dlc" in https://*|http://*) _dlurls="${_dlurls:+$_dlurls }$_dlc" ;; esac
+    done
+    [ -n "$_dlurls" ] || { dead_link_advice; die "There is no download link to try (M2_CLIENT_ARCHIVE_URL is empty and these server files define no PACK_URL)."; }
 
     check_space "$MIN_FREE_MB" "$CACHE" "downloading and unpacking the client"
 
     note "  fetching the server files. This is well over a gigabyte and takes"
     note "  a while -- please let it run. Interrupting is safe: it resumes."
-    note "  from: $_url"
-    if url_is_mega "$_url"; then
-        download_mega "$_url" "$ARCHIVE_DIR" || { dead_link_advice; die "Could not download the server files from MEGA."; }
-    else
-        download_direct "$_url" "$ARCHIVE_DIR" || { dead_link_advice; die "Could not download the server files."; }
-    fi
+
+    _dln=0; _dlok=0; _url=""
+    for _dlu in $_dlurls; do
+        _dln=$((_dln + 1))
+        if [ "$_dln" -gt 1 ]; then
+            note ""
+            note "  trying another copy of the same archive"
+            # .megatmp.* is resume state for one particular link. Kept, it
+            # would be mistaken for progress against the next one.
+            find "$ARCHIVE_DIR" -maxdepth 1 -name '.megatmp.*' -exec rm -f {} + 2>/dev/null || true
+        fi
+        note "  from: $_dlu"
+        if url_is_mega "$_dlu"; then
+            download_mega "$_dlu" "$ARCHIVE_DIR" && { _url="$_dlu"; _dlok=1; break; }
+        else
+            download_direct "$_dlu" "$ARCHIVE_DIR" && { _url="$_dlu"; _dlok=1; break; }
+        fi
+    done
+    [ "$_dlok" = 1 ] || { dead_link_advice; die "Could not download the server files."; }
 
     _got=$(cached_archive)
     [ -n "$_got" ] || { dead_link_advice; die "The download finished but there is no archive in $ARCHIVE_DIR."; }

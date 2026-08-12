@@ -1045,6 +1045,16 @@ function Invoke-SourceFetch {
         if ($url) { $runArgs += @('-e', "M2_SRC_URL=$url") }
         if ($sha -match '^[0-9a-f]{64}$') { $runArgs += @('-e', "M2_SRC_SHA256=$sha") }
 
+        # The same archive somewhere else, reached only after the link above has
+        # already failed -- a MEGA "509 over quota" above all, which is the
+        # share owner's daily allowance being spent and is otherwise a wait of
+        # hours. Passed even when the operator named their own -SourceUrl,
+        # because a fallback cannot be reached until that one has failed.
+        $fb1 = Get-PointerLink 'src_server_url_fallback'
+        $fb2 = Get-PointerLink 'src_server_url_fallback2'
+        if ($fb1) { $runArgs += @('-e', "M2_SRC_URL_FALLBACK=$fb1") }
+        if ($fb2) { $runArgs += @('-e', "M2_SRC_URL_FALLBACK2=$fb2") }
+
         $mb = Get-PointerValue 'src_server_size_mb'
         if ($mb -match '^[0-9]+$') {
             Write-Say "The server files are about $mb MB and are downloaded once."
@@ -1616,6 +1626,11 @@ downloaded server files, the client -- is kept either way.
             }
         }
     }
+    # The same archive somewhere else. Written on every run rather than only
+    # when empty, so an installation follows whatever artifacts.json names now
+    # instead of keeping a link that has since been retired.
+    Set-EnvValue $envPath 'M2_CLIENT_ARCHIVE_URL_FALLBACK'  (Get-PointerLink 'src_client_url_fallback')
+    Set-EnvValue $envPath 'M2_CLIENT_ARCHIVE_URL_FALLBACK2' (Get-PointerLink 'src_client_url_fallback2')
 
     $bridgePort = Get-EnvValue $envPath 'M2_BRIDGE_PORT'
     if (-not $bridgePort) { $bridgePort = '7789' }

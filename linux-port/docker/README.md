@@ -83,12 +83,14 @@ downloading 1.4 GB again:
 ./fetch-sources.sh --archive /path/to/serverfiles.zip
 ```
 
-> **The MEGA share is currently over quota.** An anonymous MEGA link has a
-> bandwidth limit, and once it is spent every chunk comes back
-> `509 (over quota)`. `fetch-sources.sh` watches for that and stops with a clear
-> message instead of retrying for hours — it clears by itself, usually in a few
-> hours. If you are in a hurry, download the package on another machine and pass
-> it with `--archive`.
+> **If MEGA answers `509 (over quota)`.** An anonymous MEGA link has a bandwidth
+> limit, and once the share's owner has spent the day's allowance every chunk
+> comes back `509`. `fetch-sources.sh` notices and moves straight on to the next
+> copy of the same archive that `artifacts.json` names — the identical file,
+> checked against the same `sha256`, so this costs seconds rather than the
+> afternoon it used to. Only when every copy is out of reach does it stop, and
+> then the way past it is to download the package on another machine and pass it
+> with `--archive`.
 
 `./fetch-sources.sh status` says what has been acquired so far, and
 `./fetch-sources.sh check` verifies the staged tree.
@@ -243,10 +245,12 @@ Two things to know:
 The link belongs to somebody else's MEGA account, so one day it will stop
 working. That is not a fault in your server, and there are two ways round it.
 
-There is also a temporary version of the same problem, and **it is happening
-now**: an anonymous MEGA share has a bandwidth quota, and once it is spent every
-request comes back `509 (over quota)` for a few hours. Same symptom, different
-cure — wait, or supply the archive yourself.
+There is also a temporary version of the same problem: an anonymous MEGA share
+has a bandwidth quota, and once it is spent every request comes back
+`509 (over quota)` for a few hours. The builder tries the fallback links in
+`artifacts.json` before it gives up — the same archive somewhere else — so this
+is usually invisible. If every copy is out of reach, supply the archive
+yourself.
 
 If you already handed `fetch-sources.sh` an archive with `--archive`, that is
 the same file this tool wants. Put a copy in `./client-archive/` and it

@@ -17,6 +17,13 @@ every version here.
 
 ---
 
+## 1.12.0 — 2026-08-12
+
+### Added
+
+- **A second place to download from.** When MEGA answers `509 over quota` — the share's daily allowance, spent by other people, nothing to do with your machine — the installer now moves straight on to another copy of the same archive instead of stopping. It is the identical file and it is checked against the same checksum, so an install that used to mean coming back in a few hours carries on within seconds. This covers the three big downloads: the browser client's data, the desktop client, and the server files.
+- Nothing to set up. The links travel in `artifacts.json` and an update picks them up. A link you supplied yourself is still tried first, and a fallback is only ever reached after the one before it has already failed.
+
 ## 1.11.13 — 2026-08-12
 
 ### Fixed
