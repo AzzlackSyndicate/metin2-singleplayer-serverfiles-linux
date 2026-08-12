@@ -1390,6 +1390,17 @@ T = {
  "login":        {"en":"Log in","de":"Einloggen","tr":"Giriş yap"},
  "logout":       {"en":"Log out","de":"Abmelden","tr":"Çıkış"},
  "player_q":     {"en":"Are you a player?","de":"Bist du ein Spieler?","tr":"Oyuncu musun?"},
+ # The frame around the two ways into the game, and the heading of the second
+ # of them. Both are set in the same voice as play_title, because they sit
+ # next to it and a quieter one would read as the lesser option.
+ # Said on the card that comes FIRST, because the account is the step before
+ # either way in -- and both ways use the same one, which is not obvious when
+ # they are presented as a choice.
+ "acc_needed":   {"en":"You play with a game account — the same one in the browser and in the download. Making one takes a moment.",
+                  "de":"Zum Spielen brauchst du ein Spiel-Konto — dasselbe im Browser wie im Download. Erstellen dauert einen Moment.",
+                  "tr":"Oynamak için bir oyun hesabı gerekir — tarayıcıda ve indirmede aynısı. Oluşturmak bir dakika sürer."},
+ "ways_t":       {"en":"HOW TO PLAY","de":"SO KOMMST DU INS SPIEL","tr":"OYUNA NASIL GİRERSİN"},
+ "dl_now_t":     {"en":"DOWNLOAD IT NOW","de":"JETZT HERUNTERLADEN","tr":"ŞiMDİ İNDİR"},
  "dl_hint":      {"en":"Download it, extract it anywhere you prefer and just run Metin2Distribute.exe — no installation, everything comes pre-configured. The game is fully portable: copy the folder onto a flash drive and play from any machine you like.",
                   "de":"Herunterladen, an einen beliebigen Ort entpacken und einfach Metin2Distribute.exe starten — keine Installation, alles ist vorkonfiguriert. Das Spiel ist komplett portabel: Kopiere den Ordner auf einen USB-Stick und spiele von jedem Rechner, den du magst.",
                   "tr":"İndir, istediğin yere çıkart ve sadece Metin2Distribute.exe'yi çalıştır — kurulum yok, her şey hazır gelir. Oyun tamamen taşınabilir: klasörü bir USB belleğe kopyala, istediğin bilgisayardan oyna."},
@@ -2588,6 +2599,21 @@ font-size:15px;animation:rise .35s ease both;word-break:break-word}
   transform:translateX(-100%);animation:travel 2.4s ease-in-out .6s infinite}
 @keyframes travel{0%{transform:translateX(-100%)}55%,100%{transform:translateX(100%)}}
 
+/* ---- the two ways into the game -----------------------------------------
+   Framed together, and labelled, because that is the question a visitor
+   actually has: not "which of these buttons is the download" but "how do I
+   play". Inside the frame they are alternatives, so a rule with the word
+   between the two lines separates them rather than more whitespace -- two
+   cards under each other read as step one and step two.               */
+.playways{max-width:460px;margin:0 auto 16px;padding:14px;border:1px solid var(--line);
+  border-radius:16px;background:rgba(255,255,255,.02)}
+.playways>.card{margin:0}
+.playways-t{margin:0 0 12px;font-size:12px;font-weight:700;letter-spacing:1.6px;
+  color:var(--muted);text-align:center}
+.orsep{display:flex;align-items:center;gap:12px;margin:14px 2px;
+  font-size:18px;font-weight:800;letter-spacing:3px;color:#cdc5b0}
+.orsep::before,.orsep::after{content:"";flex:1;height:1px;background:var(--line)}
+
 /* ---- the browser client, once it is ready to play ------------------------
    This card is the answer to "and now?" for somebody who has just made an
    account, so it is the one thing on the page that moves. Three layers, all
@@ -2725,47 +2751,6 @@ setInterval(function(){
 <p>{{t('about_oss')}}</p>
 {% if contact %}<p>{{t('about_contact')}} <a href="mailto:{{contact}}">{{contact}}</a>.</p>{% endif %}
 </div>
-{% if browser_ready %}
-{# Shown only when a browser client is really on the volume and switched on.
-   It goes above the download because it is the shorter road for somebody who
-   just wants to look: nothing to fetch and nothing to install. #}
-<div class="card playcard" style="max-width:420px;margin:0 auto 16px;text-align:center">
-<div style="font-size:40px">🌐</div>
-<h3>{{t('play_title')}}</h3>
-<p class="muted">{{t('play_hint')}}</p>
-<a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
-   title="{{t('tip_play')}}">{{t('play_btn')}}</a>
-</div>
-{% endif %}
-{% if local_only %}
-{# A local server plays on the machine it runs on, so there is nothing to
-   fetch over the network. Point at the Desktop shortcut instead of at a
-   download button that would only copy a file to where it already is. #}
-<div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
-<div style="font-size:40px">🎮</div>
-<h3>{{t('dl_local_t')}}</h3>
-<p class="muted">{% if client_ready %}{{t('dl_local')|safe}}{% else %}{{t('dl_local_w')}}{% endif %}</p>
-</div>
-{% elif client_ready or client_url %}
-<div class="card" style="max-width:420px;margin:0 auto 16px;text-align:center">
-<div style="font-size:40px">🎮</div>
-<h3>{{t('player_q')}}</h3>
-<p class="muted">{{t('dl_hint')}}</p>
-<a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
-   title="{{t('tip_download')}}"
-   {% if client_url %}rel="noopener noreferrer"{% endif %}>{% if client_name %}📥 {{client_name}}{% else %}{{t('download')}}{% endif %}{% if dlsize %} <span style="font-weight:400;font-size:13px">({{dlsize}})</span>{% endif %}</a>
-{# Which language the game itself is in. Worth a line of its own on the page a
-   player arrives at: it is the one thing about this server they cannot see
-   until they have downloaded a gigabyte and started it. #}
-<p class="muted" style="font-size:13px;margin:6px 0 0">🌍 {{t('dl_lang').format(lang=game_lang_name)}}</p>
-<ol class="steps">
-<li>{{t('dl_st1')}}{% if dlsize %} ({{dlsize}}){% endif %}</li>
-<li>{{t('dl_st2')}}</li>
-<li>{{t('dl_st3')}}</li>
-</ol>
-{% if dlsha and not client_url %}<p class="muted help" title="{{t('dl_sha')}}" style="font-size:11px;word-break:break-all">SHA-256: {{dlsha}}</p>{% endif %}
-</div>
-{% endif %}
 <div class="card{% if not has_accounts %} onboard{% endif %}" style="max-width:380px;margin:0 auto 16px;text-align:center">
 <div style="font-size:40px">🧑‍🤝‍🧑</div>
 <h3>{% if has_accounts %}{{t('game_account')}}{% else %}{{t('ob_title')}}{% endif %}</h3>
@@ -2783,12 +2768,63 @@ setInterval(function(){
 <p class="muted" style="margin:2px 0 12px">{{t('ob_none')}}</p>
 <a class="btn big glow" href="{{url_for('register')}}" title="{{t('tip_create_acc')}}">✨ {{t('ob_go')}}</a>
 {% else %}
+<p class="muted" style="margin:2px 0 12px">{{t('acc_needed')}}</p>
 <div class="row">
 <a class="btn" href="{{url_for('register')}}" title="{{t('tip_create_acc')}}">{{t('create_acc')}}</a>
 <a class="btn" href="{{url_for('account')}}" title="{{t('tip_my_acc')}}">{{t('my_acc')}}</a>
 </div>
 {% endif %}
 </div>
+{% set has_desktop = local_only or client_ready or client_url %}
+{% if browser_ready or has_desktop %}
+{# Both ways in, inside one frame and under one heading. Whichever of the two
+   this server has is in here; when it has both, the rule with ODER on it says
+   they are alternatives. #}
+<section class="playways">
+<div class="playways-t">{{t('ways_t')}}</div>
+{% endif %}
+{% if browser_ready %}
+{# First, because it is the shorter road for somebody who just wants to look:
+   nothing to fetch and nothing to install. #}
+<div class="card playcard" style="max-width:420px;margin:0 auto;text-align:center">
+<div style="font-size:40px">🌐</div>
+<h3>{{t('play_title')}}</h3>
+<p class="muted">{{t('play_hint')}}</p>
+<a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
+   title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+</div>
+{% endif %}
+{% if browser_ready and has_desktop %}<div class="orsep">{{t('reg_or')}}</div>{% endif %}
+{% if local_only %}
+{# A local server plays on the machine it runs on, so there is nothing to
+   fetch over the network. Point at the Desktop shortcut instead of at a
+   download button that would only copy a file to where it already is. #}
+<div class="card" style="max-width:420px;margin:0 auto;text-align:center">
+<div style="font-size:40px">🎮</div>
+<h3>{{t('dl_local_t')}}</h3>
+<p class="muted">{% if client_ready %}{{t('dl_local')|safe}}{% else %}{{t('dl_local_w')}}{% endif %}</p>
+</div>
+{% elif client_ready or client_url %}
+<div class="card" style="max-width:420px;margin:0 auto;text-align:center">
+<div style="font-size:40px">📥</div>
+<h3>{{t('dl_now_t')}}</h3>
+<p class="muted">{{t('dl_hint')}}</p>
+<a class="btn big" href="{{ client_url if client_url else url_for('download') }}"
+   title="{{t('tip_download')}}"
+   {% if client_url %}rel="noopener noreferrer"{% endif %}>{% if client_name %}📥 {{client_name}}{% else %}{{t('download')}}{% endif %}{% if dlsize %} <span style="font-weight:400;font-size:13px">({{dlsize}})</span>{% endif %}</a>
+{# Which language the game itself is in. Worth a line of its own on the page a
+   player arrives at: it is the one thing about this server they cannot see
+   until they have downloaded a gigabyte and started it. #}
+<p class="muted" style="font-size:13px;margin:6px 0 0">🌍 {{t('dl_lang').format(lang=game_lang_name)}}</p>
+<ol class="steps">
+<li>{{t('dl_st1')}}{% if dlsize %} ({{dlsize}}){% endif %}</li>
+<li>{{t('dl_st2')}}</li>
+<li>{{t('dl_st3')}}</li>
+</ol>
+{% if dlsha and not client_url %}<p class="muted help" title="{{t('dl_sha')}}" style="font-size:11px;word-break:break-all">SHA-256: {{dlsha}}</p>{% endif %}
+</div>
+{% endif %}
+{% if browser_ready or has_desktop %}</section>{% endif %}
 <div class="card" style="max-width:380px;margin:0 auto;text-align:center">
 <div style="font-size:40px">{% if local_only %}🛠️{% else %}🔑{% endif %}</div>
 <h3>{{t('welcome')}}</h3>

@@ -17,6 +17,11 @@ every version here.
 
 ---
 
+## 1.11.10 — 2026-08-12
+
+- The front page puts the game account first, then the ways to play in one frame: **JETZT IM BROWSER SPIELEN**, a line saying **ODER**, and the download with its steps.
+- The account card says what an account is for and that the same one works in the browser and in the download.
+
 ## 1.11.9 — 2026-08-12
 
 - After registering, a player is shown the ways into the game this server really offers — the browser, the download, or both side by side with **ODER** between them.
