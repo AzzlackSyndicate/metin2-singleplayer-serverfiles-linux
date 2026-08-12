@@ -17,6 +17,13 @@ every version here.
 
 ---
 
+## 1.11.13 — 2026-08-12
+
+### Fixed
+
+- The installer no longer tells you to copy the browser client onto the panel's volume by hand. It printed `docker compose cp ./browser panel:…` whenever playing in the browser was switched on — a leftover from before 1.11.0, when that really was the only way. Since then the installer fetches and installs the client itself, and the command it printed can only fail: there is no `./browser` directory in an install, so it answers `lstat …/browser: no such file or directory`. Reported by an operator who did exactly what the installer told him to.
+- The same instruction is corrected in the Docker README, where it also pointed one directory too high — a client copied there is invisible to both the panel and nginx, which serve `browser/current`.
+
 ## 1.11.12 — 2026-08-12
 
 ### Added

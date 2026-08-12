@@ -323,12 +323,31 @@ this project: it is built from game data that is not ours to hand out, the same
 reason `client.zip` is not shipped here either. You supply it — 421 files and
 about 1.7 GB, of which 408 are content-addressed data blobs.
 
+**The installer does all of this for you** — `--web-client` on a first install, or
+just run it again on an existing server and say yes when it offers the browser
+client. It downloads the two archives `artifacts.json` names, checks their
+checksums, unpacks them into a versioned directory on the panel's volume and
+swings a symlink at it.
+
+What follows is the same thing by hand, and it is only for somebody who has
+built their own client:
+
 ```sh
 # 1. the bridge
 docker compose --profile browser up -d wsbridge
 
-# 2. the client, onto the panel's volume
-docker compose cp ./browser panel:/usr/local/m2panel/browser
+# 2. the client, onto the panel's volume.
+#
+#    `./browser' is a directory YOU supply -- 421 files, about 1.7 GB. It does
+#    not exist in a checkout, so this line answers
+#        lstat .../browser: no such file or directory
+#    for anyone who has not built one. That is the command failing correctly,
+#    not the install being broken: use the installer instead.
+#
+#    Into current/, not the parent: the panel and nginx both serve
+#    browser/current, which is the symlink that makes an upgrade one atomic
+#    rename. A client dropped a level above it is invisible to both.
+docker compose cp ./browser panel:/usr/local/m2panel/browser/current
 
 # 3. tell the panel to offer it
 #    M2_BROWSER_PLAY=1 in .env, then

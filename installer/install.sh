@@ -2377,8 +2377,9 @@ start_browser_bridge() {
         say ""
         say "The panel shows a 'Play in the browser' button once a browser"
         say "client is on its volume, and not before -- there would be nothing"
-        say "behind it. To put one there:"
-        say "    docker compose cp ./browser panel:/usr/local/m2panel/browser"
+        say "behind it. This installer puts one there for you; if the button is"
+        say "missing, run it again and say yes to the browser client:"
+        say "    curl -fsSL \$M2_INSTALLER_URL | sudo sh -s -- --web-client"
     else
         warn "The bridge did not start. Playing in the browser will not work;"
         warn "everything else is unaffected. To see why:"
@@ -2579,9 +2580,9 @@ summary() {
         printf '\n'
     fi
     if [ "$BROWSER_PLAY" = "1" ]; then
-        printf '     Playing in the browser is switched on. The panel offers it\n'
-        printf '     once a browser client is on its volume:\n'
-        printf '         docker compose cp ./browser panel:/usr/local/m2panel/browser\n'
+        printf '     Playing in the browser is switched on, and this installer\n'
+        printf '     fetched the browser client for you. If the panel does not\n'
+        printf '     offer the button, run the installer again with --web-client.\n'
         printf '\n'
     fi
     printf '\n'

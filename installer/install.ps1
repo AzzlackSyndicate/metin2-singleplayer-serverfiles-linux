@@ -1673,8 +1673,8 @@ function Start-BrowserBridge {
         Write-Say ''
         Write-Say "The panel shows a 'Play in the browser' button once a browser"
         Write-Say 'client is on its volume, and not before -- there would be nothing'
-        Write-Say 'behind it. To put one there:'
-        Write-Say '    docker compose cp .\browser panel:/usr/local/m2panel/browser'
+        Write-Say 'behind it. This installer puts one there for you; if the button'
+        Write-Say 'is missing, run it again and say yes to the browser client.'
     }
     else {
         Write-Warn 'The bridge did not start. Playing in the browser will not work;'
