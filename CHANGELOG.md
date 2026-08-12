@@ -17,6 +17,56 @@ every version here.
 
 ---
 
+## 1.11.3 — 2026-08-12
+
+> [!IMPORTANT]
+> This one needs browser-client engine **1.11.3**, which the installer fetches
+> by itself. Two of the fixes below are in the client's own files, not on your
+> server, so an install that keeps an older engine keeps the bugs.
+
+### Fixed
+
+- The browser client no longer stops at "starting…". `index.dev`, the pack list
+  the client writes to `/pack/index.dev` for `InitPacks` to read, was missing
+  from the engine archive: `webfs.js` gave up on the 404 and the game never
+  started. Nothing reported it as a fault -- a 404 is the correct answer about
+  a file nobody installed -- so the page simply sat there.
+- The browser client reaches a server named by a **domain**. It only ever
+  reached one named by an IP address: the address goes through `inet_addr()`,
+  which parses dotted quads and nothing else, so a name became `INADDR_NONE`
+  and the page dialled `wss://255.255.255.255/`. The page's WebSocket shim now
+  takes the host from the URL it was opened with. Resolving it instead would
+  have been wrong even if a browser could: a certificate is issued for a name.
+- **Play in Browser** hands out a working address behind HTTPS. The panel could
+  not tell that nginx was in front of it -- it runs in a container, and Docker
+  rewrites the source address, so the loopback test it used never matched. It
+  therefore named the bridge's own port and left the connection unencrypted,
+  and browsers block a `ws://` connection from an HTTPS page outright. The
+  installer now states the fact, because it is the only party that knows it.
+- A 404 under `/play/` is no longer cached, by anyone, for a year. The rule that
+  keeps data chunks forever -- correct, their names are content hashes -- was
+  attached to error responses too. One request that arrived while the client was
+  still installing taught the CDN that a chunk did not exist, permanently.
+  Measured on a live server: a 4.2 MB chunk present on disk, served as a cached
+  404. It presents as files missing from the game, not as a caching problem.
+
+### Changed
+
+- **Play in Browser** asks the page to keep 768 MB of game data in memory
+  instead of the page's own default of 96 MB. The client reads its data in
+  4.2 MB chunks, and a chunk it does not already hold is fetched with a
+  synchronous request that stops the frame -- the browser's own cache does not
+  help, because the bytes still have to be converted mid-frame. 96 MB holds 23
+  of the 420 chunks; 768 MB holds around 180, which is more than a session in
+  one region touches. Set `M2_BROWSER_CACHE_MB` in `.env` to change it.
+
+### Added
+
+- `linux-port/package-web-client.sh` builds both browser-client archives and
+  prints the lines `artifacts.json` needs. The engine's contents are a written
+  list, not a pattern, and a missing file stops the run: the first archive was
+  packed by hand and was one file short, which is the `index.dev` bug above.
+
 ## 1.11.2 — 2026-08-12
 
 ### Fixed

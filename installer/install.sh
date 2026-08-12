@@ -1481,6 +1481,20 @@ write_env() {
     _bp=$(env_get "$_env" M2_BRIDGE_PORT || true)
     [ -n "$_bp" ] && BRIDGE_PORT="$_bp"
     env_set "$_env" M2_BRIDGE_PORT "$BRIDGE_PORT"
+    # Whether the panel may believe X-Forwarded-*. It cannot work this out for
+    # itself: it runs in a container, Docker's port forwarder rewrites the
+    # source address, and so a request nginx sent to 127.0.0.1 arrives from the
+    # bridge gateway. The panel's own loopback test therefore never matched, and
+    # it generated every link as though it were being reached directly -- which
+    # is how the browser-client button came to name the bridge's own port on an
+    # HTTPS page and hand players a ws:// address their browser blocks.
+    #
+    # Safe because it is set only here, in the arm that also installs nginx: that
+    # arm publishes the panel's port on 127.0.0.1 alone, so nothing but nginx can
+    # reach the socket and nothing else can forge those headers. Without a domain
+    # this stays 0 and the panel keeps testing for the loopback address.
+    env_set "$_env" M2_TRUST_PROXY "$([ -n "$DOMAIN" ] && echo 1 || echo 0)"
+
     if [ -n "$DOMAIN" ] || [ "$LOCAL_ONLY" = "1" ]; then
         env_set "$_env" M2_BRIDGE_BIND_ADDRESS "127.0.0.1"
         # Behind nginx every connection arrives from the same address, so the
@@ -1990,7 +2004,11 @@ _write_nginx_conf() {
 
         # The rule per file comes from the map above, which is where the three
         # cases are written out.
-        add_header Cache-Control \$m2_play_cache always;
+        # \`always' so the header reaches error responses as well -- it has to,
+        # because what it says on an error is "do not keep this". The status
+        # map above is what makes that true; see it for what went wrong when
+        # this line named \$m2_play_cache directly.
+        add_header Cache-Control \$m2_play_cache_final always;
         add_header Access-Control-Allow-Origin \"*\" always;
     }"
     fi
@@ -2082,6 +2100,22 @@ map \$uri \$m2_play_cache {
     "~^/play/[0-9a-f]{32}\.bin\$"      "public, max-age=31536000, immutable";
     "~^/play/manifest\.bin\$"          "no-store";
     "~^/play/index\.dev\$"             "no-store";
+}
+
+# ...but only for an answer that carries the file. A 404 must never be kept, and
+# the rule above would have kept one for a YEAR: the header went out with
+# \`always', which applies it to error responses too, so a request that arrived
+# while the client was still being installed taught the CDN that a chunk does
+# not exist -- permanently, and the name being a content hash means nothing can
+# ever invalidate it. MEASURED on the live server: a 4.2 MB chunk present on
+# disk, served as a cached 404 with cf-cache-status HIT. It presents as files
+# missing from the game rather than as a caching problem, because the client
+# retries and then gives up.
+map \$status \$m2_play_cache_final {
+    default   "no-store";
+    "200"     \$m2_play_cache;
+    "206"     \$m2_play_cache;
+    "304"     \$m2_play_cache;
 }
 
 server {

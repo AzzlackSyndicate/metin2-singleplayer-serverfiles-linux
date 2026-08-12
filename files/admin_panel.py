@@ -503,12 +503,17 @@ ENV_CONF = ("flask_secret", "db_host", "db_user", "db_pass", "salt", "pass_hash"
             # The client that runs in a browser. Environment only in practice:
             # m2panel.conf is written once at first run and never again, so a
             # setting added later can only reach an existing install this way.
-            "browser_play", "browser_dir", "bridge_port", "bridge_host")
+            "browser_play", "browser_dir", "bridge_port", "bridge_host",
+            "browser_cache_mb",
+            # Set by the installer when, and only when, it puts nginx in front.
+            # See _LocalProxyFix.
+            "trust_proxy")
 
 # The settings that are a yes or a no. Written out rather than guessed from the
 # value, so that "0" means off everywhere instead of meaning off in some places
 # and "a non-empty string, therefore on" in others.
-BOOL_CONF = ("local_only", "update_check", "update_apply", "browser_play")
+BOOL_CONF = ("local_only", "update_check", "update_apply", "browser_play",
+             "trust_proxy")
 
 def _conf_from_env():
     """The config keys the environment sets, already turned into the right type."""
@@ -517,7 +522,8 @@ def _conf_from_env():
         raw = os.environ.get("M2PANEL_" + key.upper(), "").strip()
         if not raw:
             continue
-        if key in ("port", "inventory_slots", "max_item_count", "max_level", "bridge_port"):
+        if key in ("port", "inventory_slots", "max_item_count", "max_level", "bridge_port",
+                   "browser_cache_mb"):
             try:
                 out[key] = int(raw)
             except ValueError:
@@ -716,6 +722,27 @@ except (TypeError, ValueError):
 # network, and nothing to do with what the browser is told.
 BRIDGE_HOST = str(CONF.get("bridge_host", "wsbridge") or "wsbridge")
 
+# How much of the game's data the page keeps in memory, in MB, as ?webfsCache=.
+#
+# This is the setting that decides whether the game stutters. The client's data
+# is fetched in 4.2 MB chunks, and a chunk the page does not already hold is
+# read with a SYNCHRONOUS request on the main thread -- the frame stops until it
+# returns. The browser's own HTTP cache does not save that: the bytes still have
+# to be handed back through a binary string and converted, 4.2 MB at a time, in
+# the middle of a frame. Only a hit in the page's own memory costs nothing.
+#
+# The page defaults to 96 MB, which holds 23 of the 420 chunks. 768 holds around
+# 180 -- comfortably more than a session in one region touches, so the stutter
+# happens once per chunk instead of every time one is evicted. Raise it for
+# players with plenty of RAM, lower it for a machine that is short of it; 0
+# leaves the page's own default alone.
+try:
+    BROWSER_CACHE_MB = int(CONF.get("browser_cache_mb", 768))
+except (TypeError, ValueError):
+    BROWSER_CACHE_MB = 768
+if BROWSER_CACHE_MB < 0 or BROWSER_CACHE_MB > 8192:
+    BROWSER_CACHE_MB = 768
+
 _BRIDGE_CACHE = {"at": 0.0, "ports": None}
 _BRIDGE_LOCK  = threading.Lock()
 
@@ -823,6 +850,8 @@ def play_url():
     url = "/play/?serverHost=%s&serverPort=%d" % (urllib.parse.quote(host, safe=""), port)
     if tls:
         url += "&serverTLS=1"
+    if BROWSER_CACHE_MB:
+        url += "&webfsCache=%d" % BROWSER_CACHE_MB
     return url
 
 # =============================================================================
@@ -1954,6 +1983,11 @@ app = Flask(__name__)
 app.secret_key = CONF["flask_secret"]
 
 
+# Is there a reverse proxy in front of this panel? Off unless the installer
+# says otherwise, so an install that predates this setting keeps behaving as it
+# did.
+TRUST_PROXY = bool(CONF.get("trust_proxy", False))
+
 class _LocalProxyFix:
     """Apply X-Forwarded-* headers, but only when nginx sent them.
 
@@ -1961,14 +1995,30 @@ class _LocalProxyFix:
     the domain name, and directly on its own port over plain HTTP. So these
     headers can also arrive straight from a visitor, and a forged
     X-Forwarded-Host would put an attacker's domain into every link the panel
-    generates. Only the proxy on the loopback address is believed.
+    generates. Believing them needs a reason.
+
+    The loopback test alone was the wrong reason. It is nginx that sits on the
+    loopback address, not this process: the panel runs in a container and
+    Docker's port forwarder rewrites the source address, so every proxied
+    request arrives from the bridge gateway and the test never matched. Nothing
+    announced that -- the panel quietly generated links as though it were being
+    reached directly, which is how the Play in Browser button came to name the
+    bridge's own port instead of 443 and produced a ws:// address that every
+    browser blocks on an HTTPS page.
+
+    So the installer says so instead, since it is the only party that knows: it
+    sets trust_proxy when it configures nginx, and in that arrangement it also
+    publishes this port on 127.0.0.1 alone. The header can then only have come
+    through nginx, because nothing else can reach the socket. Without a domain
+    no nginx is installed, the setting stays off, and the loopback test still
+    covers the panel run directly on a host.
     """
 
     def __init__(self, app):
         self.app = app
 
     def __call__(self, environ, start_response):
-        if environ.get("REMOTE_ADDR") in ("127.0.0.1", "::1"):
+        if TRUST_PROXY or environ.get("REMOTE_ADDR") in ("127.0.0.1", "::1"):
             proto = environ.get("HTTP_X_FORWARDED_PROTO")
             host  = environ.get("HTTP_X_FORWARDED_HOST")
             fwd   = environ.get("HTTP_X_FORWARDED_FOR")

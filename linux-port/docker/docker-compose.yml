@@ -250,6 +250,18 @@ services:
       # Where the panel itself asks the bridge which ports it will connect to,
       # over this network. Not what the browser is told -- see above.
       M2PANEL_BRIDGE_HOST: "wsbridge"
+      # Whether nginx is in front, which the panel cannot find out for itself:
+      # Docker's port forwarder rewrites the source address, so a proxied
+      # request does not arrive from the loopback address it was sent to. The
+      # installer sets this when it configures nginx -- and in that arrangement
+      # it publishes the panel's port on 127.0.0.1 alone, so the X-Forwarded-*
+      # headers this makes the panel believe cannot reach it from anywhere
+      # else. Without a domain there is no nginx and this stays 0.
+      M2PANEL_TRUST_PROXY: "${M2_TRUST_PROXY:-0}"
+      # How much game data the page keeps in memory, in MB. The thing that
+      # decides whether the game stutters -- see admin_panel.py, where the
+      # number is explained. 0 leaves the page's own default (96) alone.
+      M2PANEL_BROWSER_CACHE_MB: "${M2_BROWSER_CACHE_MB:-768}"
 
       # Server rates. The panel runs M2PANEL_RATES_SCRIPT when somebody saves
       # the rates page and reads M2PANEL_RATES_STATUS back to report how it

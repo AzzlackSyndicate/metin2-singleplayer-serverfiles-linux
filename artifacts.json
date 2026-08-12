@@ -3,12 +3,12 @@
   "_note": "Where the large things this repository does not carry come from. Nothing here is game data; these are pointers to it. Keep this file FLAT -- one \"key\": \"value\" per line -- because install.sh and fetch-web-client.sh read it with sed and there is no JSON parser in the helper container the Windows installer uses. See linux-port/docker/README.md, 'The five archives'.",
   "_placeholders": "A value that is not an https:// link, or not 64 hex characters, has not been filled in yet. Every reader checks that and stops with 'the link has not been filled in' instead of attempting a meaningless download.",
 
-  "_engine": "The browser client's own code: index.html, index.js, index.wasm, webfs.js, serve-webfs.py and the m2-ws2tcp binaries for six platforms. Unpacks flat. It carries no game data, so it is a release asset of this repository -- which is why engine_url is DERIVED from engine_version and never maintained by hand. Publishing a new engine is: attach the file to the release tagged v<engine_version>, then change engine_version and engine_sha256 here.",
-  "engine_version": "1.11.0",
+  "_engine": "The browser client's own code: index.html, index.js, index.wasm, index.dev, webfs.js, serve-webfs.py and the m2-ws2tcp binaries for six platforms. Built by linux-port/package-web-client.sh, which holds the authoritative list of what belongs in it -- the first archive was packed by hand without index.dev and the client stopped at 'starting'. Unpacks flat. It carries no game data, so it is a release asset of this repository -- which is why engine_url is DERIVED from engine_version and never maintained by hand. Publishing a new engine is: attach the file to the release tagged v<engine_version>, then change engine_version and engine_sha256 here.",
+  "engine_version": "1.11.3",
   "engine_file": "Reference_WebClientEngine.zip",
   "engine_url": "",
   "engine_url_template": "https://github.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/releases/download/v{version}/Reference_WebClientEngine.zip",
-  "engine_sha256": "533191dd2a41a310e6c52ab97d9fe23aa6e85692e40d2da70e6a5815882cb429",
+  "engine_sha256": "d4fe9c1382a706419c6e508528dd0d6011f2d83045258cde5f95c5cbb1460587",
   "engine_size_mb": 18,
   "engine_requires_data": "1.0.0",
 
