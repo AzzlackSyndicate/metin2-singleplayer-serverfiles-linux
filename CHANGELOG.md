@@ -17,6 +17,12 @@ every version here.
 
 ---
 
+## 1.11.12 — 2026-08-12
+
+### Added
+
+- **A server-wide movement-speed bonus.** Set `M2_MOVE_SPEED_BONUS` in `.env` to a percentage and every character gets it at login — no item, no button, nothing for players to know about. `0` is off, which is what a server that says nothing gets. Changing the number takes effect at each character's next login; nothing has to be cleaned up.
+
 ## 1.11.11 — 2026-08-12
 
 - The "What is this?" box on the front page says you can play in the browser — on servers that offer it — and no longer explains the panel to people who are looking for the game.

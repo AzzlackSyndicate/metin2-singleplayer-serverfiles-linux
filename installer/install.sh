@@ -937,6 +937,22 @@ run_fetch_sources() {
         return 0
     fi
 
+    # The movement-speed bonus is decided HERE, not at run time: the quest that
+    # applies it is compiled into the game image, and a compiled quest cannot
+    # read an environment variable. prepare-context.sh writes the number into
+    # the file before qc sees it.
+    #
+    # Read back out of .env on an update, so the setting survives; an operator
+    # on a first install passes it in the environment
+    # (M2_MOVE_SPEED_BONUS=100 curl ... | sh) because .env does not exist yet.
+    if [ -z "${M2_MOVE_SPEED_BONUS:-}" ]; then
+        M2_MOVE_SPEED_BONUS=$(env_get "$INSTALL_DIR/.env" M2_MOVE_SPEED_BONUS 2>/dev/null || true)
+    fi
+    case "${M2_MOVE_SPEED_BONUS:-}" in
+        ''|*[!0-9]*) M2_MOVE_SPEED_BONUS=0 ;;
+    esac
+    export M2_MOVE_SPEED_BONUS
+
     export M2_SRC_ARCHIVE M2_SRC_REFERENCE_DIR M2_SRC_URL M2_SRC_CACHE
 
     _rc=0
@@ -1537,6 +1553,7 @@ write_env() {
     BROWSER_PLAY="$WANT_WEB"
     case "$BROWSER_PLAY" in 1|true|yes|on) BROWSER_PLAY=1 ;; *) BROWSER_PLAY=0 ;; esac
     env_set "$_env" M2_BROWSER_PLAY "$BROWSER_PLAY"
+    env_set "$_env" M2_MOVE_SPEED_BONUS "${M2_MOVE_SPEED_BONUS:-0}"
 
     # WHERE THE DESKTOP CLIENT COMES FROM.
     #

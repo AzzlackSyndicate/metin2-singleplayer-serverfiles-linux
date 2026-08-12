@@ -1058,6 +1058,19 @@ function Invoke-SourceFetch {
         Write-Say 'installer again does not download it a second time.'
     }
 
+    # The movement-speed bonus has to be known HERE, before the build context is
+    # staged: the quest that applies it is compiled into the game image, and a
+    # compiled quest cannot read an environment variable. prepare-context.sh
+    # writes the number into the quest before qc sees it.
+    #
+    # Read back out of .env on an update so the setting survives; on a first
+    # install it comes from the environment ($env:M2_MOVE_SPEED_BONUS = '100').
+    $speed = $env:M2_MOVE_SPEED_BONUS
+    if (-not $speed) { $speed = Get-EnvValue (Join-Path $script:InstallDir '.env') 'M2_MOVE_SPEED_BONUS' }
+    if ($speed -notmatch '^[0-9]+$') { $speed = '0' }
+    $script:MoveSpeedBonus = $speed
+    $runArgs += @('-e', "M2_MOVE_SPEED_BONUS=$speed")
+
     $runArgs += @($script:FetcherImage,
                   'sh', '/work/repo/linux-port/fetch-sources.sh', 'fetch',
                   '--cache', '/work/cache')
@@ -1584,6 +1597,10 @@ downloaded server files, the client -- is kept either way.
     $browserPlay = if ($script:WantWeb) { '1' } else { '0' }
     $script:BrowserPlay = $browserPlay
     Set-EnvValue $envPath 'M2_BROWSER_PLAY' $browserPlay
+    $sp = $script:MoveSpeedBonus
+    if (-not $sp) { $sp = Get-EnvValue $envPath 'M2_MOVE_SPEED_BONUS' }
+    if ($sp -notmatch '^[0-9]+$') { $sp = '0' }
+    Set-EnvValue $envPath 'M2_MOVE_SPEED_BONUS' $sp
 
     # Where the desktop client comes from: its own archive since the package was
     # split. Left empty, the builder looks for a client inside the server files,

@@ -276,16 +276,28 @@ RUN set -eux; \
              echo "       that is the handler the five actions run in; without it the"; \
              echo "       helper would only ever report players offline"; \
              find /tmp/qc-work/object; exit 1; }; \
+      if [ -f /quest-add/speed_boost.quest ]; then \
+        sed 's/\r$//' /quest-add/speed_boost.quest > /tmp/qc-work/speed_boost.quest; \
+        ( cd /tmp/qc-work && /src/server/game/src/quest/qc speed_boost.quest ); \
+        test -s /tmp/qc-work/object/state/speed_boost \
+          || { echo "FATAL: qc produced no state file for speed_boost ($lang)"; \
+               find /tmp/qc-work/object; exit 1; }; \
+        cp -a /tmp/qc-work/speed_boost.quest "$out/speed_boost.quest"; \
+      fi; \
       cp -a /tmp/qc-work/object "$out/object"; \
       cp -a /tmp/qc-work/web_admin.quest "$out/web_admin.quest"; \
       cp -a /tmp/qc-work/quest_functions "$out/quest_functions"; \
       cp -a "$questdir/locale_list" "$out/locale_list"; \
       grep -qx 'web_admin.quest' "$out/locale_list" || echo 'web_admin.quest' >> "$out/locale_list"; \
+      if [ -f /quest-add/speed_boost.quest ]; then \
+        grep -qx 'speed_boost.quest' "$out/locale_list" \
+          || echo 'speed_boost.quest' >> "$out/locale_list"; \
+      fi; \
       find "$out" -type d -exec chmod 0755 {} +; \
       find "$out" -type f -exec chmod 0644 {} +; \
       [ "$(stat -c '%a' "$out/object/state")" = "755" ] \
         || { echo "FATAL: $out/object/state is not world-readable; the game user could not load any quest"; exit 1; }; \
-      echo "compiled web_admin.quest for locale '$lang':"; \
+      echo "compiled quests for locale '$lang':"; \
       find "$out/object" -type f | sed 's|^|    |'; \
       rm -rf /tmp/qc-work; \
     done

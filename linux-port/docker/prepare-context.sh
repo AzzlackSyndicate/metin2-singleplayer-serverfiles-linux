@@ -220,6 +220,41 @@ else
   info "         database route."
 fi
 
+# -----------------------------------------------------------------------------
+say "movement-speed bonus"
+# A second quest, staged the same way and for the same reason: it runs inside
+# the game cores, so it belongs in the GAME context and is compiled by the same
+# qc. Off unless somebody asks for it.
+#
+# M2_MOVE_SPEED_BONUS is a percentage. The number is written INTO the file here
+# rather than read at run time, because a compiled quest cannot read an
+# environment variable -- so changing it means a rebuild, which the installer
+# does anyway. The quest itself notices the change: it remembers what it applied
+# in a quest flag and swaps the affect at each character's next login, so there
+# is nothing to clean up when the number goes up, down or back to zero.
+_speed="${M2_MOVE_SPEED_BONUS:-0}"
+case "$_speed" in
+  ''|*[!0-9]*) info "M2_MOVE_SPEED_BONUS='$_speed' is not a number -- treating it as 0"
+               _speed=0 ;;
+esac
+if [ "$_speed" -gt 0 ] && [ -f "$PANEL_SRC/speed_boost.quest" ]; then
+  sed "s/local want = .*/local want = $_speed/"       "$PANEL_SRC/speed_boost.quest" > "$HERE/game/quest/speed_boost.quest"
+  if grep -q "local want = $_speed" "$HERE/game/quest/speed_boost.quest"; then
+    info "speed_boost.quest -> game/quest/  (+${_speed}% for everyone, at login)"
+  else
+    rm -f "$HERE/game/quest/speed_boost.quest"
+    info "WARNING: the bonus could not be written into speed_boost.quest --"
+    info "         staging it unchanged would apply the wrong number, so it"
+    info "         is left out entirely."
+  fi
+elif [ "$_speed" -gt 0 ]; then
+  rm -f "$HERE/game/quest/speed_boost.quest"
+  info "WARNING: $PANEL_SRC/speed_boost.quest not found -- no speed bonus"
+else
+  rm -f "$HERE/game/quest/speed_boost.quest"
+  info "no movement-speed bonus (M2_MOVE_SPEED_BONUS=0)"
+fi
+
 if [ -f "$PANEL_SRC/web_admin_schema.sql" ]; then
   cp -a "$PANEL_SRC/web_admin_schema.sql" "$HERE/panel/schema/"
   info "web_admin_schema.sql"
