@@ -2004,10 +2004,10 @@ _write_nginx_conf() {
 
         # The rule per file comes from the map above, which is where the three
         # cases are written out.
-        # \`always' so the header reaches error responses as well -- it has to,
-        # because what it says on an error is "do not keep this". The status
-        # map above is what makes that true; see it for what went wrong when
-        # this line named \$m2_play_cache directly.
+        # always, so the header reaches error responses too -- it has to,
+        # because on an error what it says is do not keep this. The status map
+        # above is what makes that true; see it for what went wrong while this
+        # line named \$m2_play_cache directly.
         add_header Cache-Control \$m2_play_cache_final always;
         add_header Access-Control-Allow-Origin \"*\" always;
     }"
@@ -2768,10 +2768,22 @@ fetch_web_client() {
     # locate_repo, so REPO_DIR is empty exactly on the servers that update
     # first. Downloading is therefore not a fallback but the normal case, and
     # the checkout is preferred only when there is one.
+    # REFRESHED EVERY RUN, NOT PLACED ONCE.
+    #
+    # This used to skip a file that was already there, and that quietly made
+    # browser-client updates impossible: artifacts.json IS the pointer that says
+    # which engine version an install should have, so a stale copy reports that
+    # the installed engine is current and the fetcher correctly does nothing.
+    # MEASURED -- a server ran the 1.11.3 installer to completion, reported
+    # success, and kept engine 1.11.0, because the pointer it consulted was the
+    # one that shipped with 1.11.0.
+    #
+    # An existing copy is still the fallback when neither source can be reached,
+    # so an update with no network to GitHub degrades to "keep what you have"
+    # rather than to "lose the browser client".
     _raw="${M2_INSTALLER_URL%/installer/install.sh}"
     for _need in linux-port/fetch-web-client.sh artifacts.json; do
         _base=$(basename "$_need")
-        [ -f "$INSTALL_DIR/$_base" ] && continue
 
         if [ -n "$REPO_DIR" ] && [ -f "$REPO_DIR/$_need" ]; then
             cp "$REPO_DIR/$_need" "$INSTALL_DIR/$_base" && {
@@ -2787,6 +2799,12 @@ fetch_web_client() {
             continue
         fi
         rm -f "$INSTALL_DIR/$_base.part"
+
+        if [ -f "$INSTALL_DIR/$_base" ]; then
+            warn "$_base could not be refreshed from $_raw; using the copy already here."
+            warn "A newer browser client, if one was published, will not be picked up."
+            continue
+        fi
 
         warn "$_base could not be obtained, from the checkout or from $_raw."
         warn "The browser client cannot be fetched."

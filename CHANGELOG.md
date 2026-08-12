@@ -17,6 +17,25 @@ every version here.
 
 ---
 
+## 1.11.4 — 2026-08-12
+
+### Fixed
+
+- Updating actually updates the browser client. The installer placed
+  `artifacts.json` -- the file that says which engine version an install should
+  have -- only when it was not already there, so every later run consulted the
+  pointer that shipped with the version being replaced and correctly concluded
+  there was nothing to do. Measured: a server ran the 1.11.3 installer to
+  completion, reported success, and kept engine 1.11.0. Both helper files are
+  refreshed every run now, and an existing copy is used only when neither the
+  checkout nor GitHub can be reached.
+- 1.11.3 could not write its nginx configuration. A comment added to the
+  `/play/` block contained a plain double quote, which ended the shell string
+  that block is built in; the rest was read as commands. `sh -n` cannot see
+  that -- it is valid syntax, just not the intended one -- so it passed every
+  check and failed on the server, leaving the bootstrap configuration in place
+  and HTTPS down until the installer was run again.
+
 ## 1.11.3 — 2026-08-12
 
 > [!IMPORTANT]
