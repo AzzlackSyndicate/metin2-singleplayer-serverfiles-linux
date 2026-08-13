@@ -2103,6 +2103,16 @@ def csrf_protect():
     """Every POST must carry the token from the page it claims to come from."""
     if request.method != "POST":
         return
+    # /crash-report is the one exception, and it has to be: it is posted by the
+    # game page, which has no panel session and therefore no token to carry.
+    #
+    # The exemption is safe because the endpoint has nothing to forge. CSRF
+    # protects an action taken with somebody ELSE's authority -- and this one
+    # takes no authority at all: it is unauthenticated, it changes nothing a
+    # user owns, and the worst a forged request achieves is one junk file, of
+    # which the rate limit permits six per address per hour.
+    if request.endpoint == "crash_report":
+        return
     sent = request.form.get("_csrf", "")
     real = session.get("_csrf", "")
     if not (real and sent and hmac.compare_digest(sent, real)):
@@ -3963,6 +3973,115 @@ def play_asset(sub):
     if sub.endswith(".wasm"):
         resp.headers["Content-Type"] = "application/wasm"
     return _play_headers(resp, _play_cache_for(sub))
+
+# ---------------- Crash reports from the browser client ----------------
+#
+# The browser client fails where nobody can look. When the wasm module traps,
+# the player sees a frozen screen and the trace that names the function which
+# called into nothing sits in a console they will never open. Every bug in this
+# port has so far cost a round of "please press F12 and paste what it says",
+# which only works for people who can reproduce it themselves.
+#
+# crash-report.js offers to send it. This is where it lands.
+#
+# The endpoint takes no login on purpose: a player whose client has just died is
+# not signed in, and requiring it would lose exactly the reports worth having.
+# So it is written to be dull -- a small ceiling, a per-address rate limit, a
+# fixed set of fields each with its own length, and a directory that prunes
+# itself. Nothing stored here is ever rendered as HTML.
+#
+# The IP address is NOT stored. The dialog tells the player no personal
+# information is sent, an address is personal information, and a promise that is
+# only kept in the client is not kept at all. It is used for the rate limit,
+# in memory, and then it is gone.
+CRASH_DIR = _env_path("M2PANEL_CRASH_DIR", os.path.join(PANEL_DIR, "crash-reports"))
+# 64 KB, because a report carries the tail of the client's console log as well
+# as the trace. That log is what turns "it crashed" into a line number: the
+# client prints PYEXC when a script raises, and that one line has already
+# resolved a bug that a stack trace alone pointed at the wrong layer for.
+CRASH_MAX_BYTES = 64 * 1024
+CRASH_KEEP = 300
+
+def _crash_field(value, limit):
+    """One field, as a string, no longer than it is allowed to be."""
+    if not isinstance(value, str):
+        value = "" if value is None else str(value)
+    return value.replace("\r\n", "\n")[:limit]
+
+@app.route("/crash-report", methods=["POST"])
+def crash_report():
+    if rate_limited("crash", 6, 3600):
+        return jsonify(ok=False, error="too many reports from this address"), 429
+
+    raw = request.get_data(cache=False, as_text=False) or b""
+    if len(raw) > CRASH_MAX_BYTES:
+        return jsonify(ok=False, error="report too large"), 413
+    try:
+        sent = json.loads(raw.decode("utf-8", "replace"))
+        if not isinstance(sent, dict):
+            raise ValueError("not an object")
+    except Exception:
+        return jsonify(ok=False, error="not a JSON object"), 400
+
+    report = {
+        "received":    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "when":        _crash_field(sent.get("when"), 40),
+        "message":     _crash_field(sent.get("message"), 2000),
+        "stack":       _crash_field(sent.get("stack"), 8000),
+        "description": _crash_field(sent.get("description"), 4000),
+        # The client's own account of a script error, and the console tail
+        # around it. Kept as separate fields because the first is the answer
+        # and the second is the context -- reading them apart is the point.
+        "pyexc":       _crash_field(sent.get("pyexc"), 8000),
+        "log":         _crash_field(sent.get("log"), 16000),
+        # The character, so a report can be matched against the game's own logs
+        # for the same minute. The client publishes it deliberately and the
+        # dialog lists it; the ACCOUNT name still never leaves the wasm heap.
+        "character":   _crash_field(sent.get("character"), 40),
+        "userAgent":   _crash_field(sent.get("userAgent"), 400),
+        "page":        _crash_field(sent.get("page"), 400),
+        "serverHost":  _crash_field(sent.get("serverHost"), 120),
+        "serverPort":  _crash_field(sent.get("serverPort"), 10),
+        "versions":    _crash_field(json.dumps(sent.get("versions") or {}), 400),
+    }
+
+    try:
+        os.makedirs(CRASH_DIR, exist_ok=True)
+        name = "%s-%s.json" % (time.strftime("%Y%m%d-%H%M%S", time.gmtime()),
+                               secrets.token_hex(3))
+        with open(os.path.join(CRASH_DIR, name), "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, ensure_ascii=False)
+        # Keep the newest and no more: an endpoint anybody can post to must not
+        # be able to fill the disk, however slowly.
+        kept = sorted(f for f in os.listdir(CRASH_DIR) if f.endswith(".json"))
+        for old in kept[:-CRASH_KEEP]:
+            try:
+                os.remove(os.path.join(CRASH_DIR, old))
+            except OSError:
+                pass
+    except Exception as exc:
+        app.logger.warning("crash report could not be stored: %s", exc)
+        return jsonify(ok=False, error="could not store the report"), 500
+
+    return jsonify(ok=True)
+
+@app.route("/admin/crashes")
+@login_required
+def crash_list():
+    """The reports, newest first, as JSON. Read with a browser or with curl."""
+    out = []
+    try:
+        names = sorted((f for f in os.listdir(CRASH_DIR) if f.endswith(".json")),
+                       reverse=True)[:100]
+        for name in names:
+            try:
+                with open(os.path.join(CRASH_DIR, name), encoding="utf-8") as fh:
+                    out.append(json.load(fh))
+            except Exception:
+                continue
+    except OSError:
+        pass
+    return jsonify(count=len(out), reports=out)
 
 # ---------------- Player registration & account ----------------
 @app.route("/register", methods=["GET", "POST"])

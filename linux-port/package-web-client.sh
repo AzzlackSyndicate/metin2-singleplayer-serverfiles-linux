@@ -66,6 +66,7 @@ index.js
 index.wasm
 index.dev
 webfs.js
+crash-report.js
 serve-webfs.py
 m2-ws2tcp-linux-x64
 m2-ws2tcp-linux-x86

@@ -17,6 +17,35 @@ every version here.
 
 ---
 
+## 1.13.0 — 2026-08-13
+
+### Added
+
+- **Enable Custom Experience? — one question, and everything behind it.** The installer now asks once, before it downloads anything, whether your server should play the way the original files do or the friendlier way this project has been using. It is **off** by default and nothing changes for anyone who says no. Say yes and you get: items and Yang picked up from twice as far away, a horse that always comes when you call it, no waiting until tomorrow between the Horse Medal steps, bonus drops on 283 metin stones and bosses, Musk Oil stocked in the General Store, High Risk offered to your players, and everyone 20% faster on foot. Rates are untouched and so are your existing characters.
+- **It is written down, and it is replayable.** The answer is kept as `M2_CUSTOM_EXPERIENCE` in your server's `.env`, so every later update rebuilds the server you have instead of the one the defaults would produce, and the update command the panel shows you names it. For an unattended install, `--custom-experience` / `--no-custom-experience` on Linux, `-CustomExperience` / `-NoCustomExperience` on Windows, or `M2_CUSTOM_EXPERIENCE=1` in the environment. `--yes` takes the default and leaves it off. Everything behind the switch now lives in `files/custom/` and is applied to the server tree at every build, so it survives updates instead of being quietly reverted by the next one — which is exactly what used to happen to changes made by hand.
+- Turning it on also turns High Risk on and sets the movement-speed bonus to 20%, as starting points rather than as locks: `M2_HIGH_RISK=0` and a movement-speed bonus you have chosen yourself both still win, and both are carried forward untouched by later updates.
+- **High Risk — a mode your players choose, at level 15.** They are asked once, shortly after they reach it: live dangerously, or carry on as before. High Risk means anyone may attack and kill them, anywhere, their own empire included, and nobody is punished for doing it. In exchange they earn 50% more experience and find 50% more drops — and when they die they drop items the way the cruellest characters do, out of their bags and off their bodies, using the game's own Cruel rules rather than a new one. No Risk changes nothing at all.
+- **It is never a trap.** A character in High Risk is drawn the way a player-killer is drawn, to themselves and to everyone around them, so nobody is in it without knowing and nobody attacks one by accident. There is a line in the chat window at every login while it is on, and the choice can be reversed as often as they like at any Guardian or City Guard.
+- Town safe zones still protect everyone, High Risk included — killing inside one would break every shop standing in it. Characters below level 15 and game masters are outside the mode entirely.
+- To run a server without it, delete `files/high_risk.quest` before assembling, or set `M2_HIGH_RISK=0`. The rest of the change does nothing on its own: without that file no character can enter the mode and every check falls back to the ordinary rules.
+- **The browser client keeps what it downloads.** It used to fetch half a gigabyte of game data in the background and lose it again by the next visit — not because the server said so, but because a browser's ordinary cache is one shared pool that the game's own reading pushes things out of. It now keeps that data in storage of its own. Measured: 144 downloads on a first visit, **one** on the second.
+- **If it crashes, it offers to say so.** A dialog appears with what went wrong, a box to describe what you were doing, and a button to send it. Nothing leaves the browser unless that button is pressed, and the complete report can be read first. Account name and password are not in it — they are not reachable from the page at all.
+- **Playing in the browser fills the window.** The game followed a fixed 1024×768 and let the browser stretch it. It now follows the window, including full screen, and remembers if you pin a resolution instead.
+
+### Fixed
+
+- **The Drachenhort quest paid out its own fee.** Handing in the items credited 150,000 Yang instead of charging it, and it could be repeated. Anyone who found it had unlimited money. This one is not behind the Custom Experience switch and never will be: it is a hole in the shipped files, it is open on every server running them untouched, and every server gets it closed.
+- **A character with a friend, or in a guild of more than one, could not play in the browser.** The screen stayed grey at login and never finished loading. One line of the interface used a variable name that Python 3 no longer allows there, and it ran on every friend and every guild member.
+- **A script error no longer takes the whole browser client down with it.** It is written to the console and the game carries on — which is how the bug above was found in seconds after days of guessing.
+- Skills and emoticons can be dragged onto the quick slots again, and from one slot to another.
+- Selling something no longer quotes a price with decimals in it. The price charged was always correct; only the confirmation was wrong.
+- A weapon no longer stays in your hands after you take it off, and a metin's aura stays on the metin instead of occasionally landing on the player.
+- Items and Yang are picked up from 600 units away on foot and 800 on a mount, instead of 300. With the Custom Experience on.
+- Blessing Scrolls and Bravery Capes stack, along with eight more items that claimed to and never did — including Blessing Marbles and Scrolls of Correction. Every server gets this: the rows say they stack and then do not, which is a mistake in the table rather than a decision.
+- The Horse Medal quests no longer make you wait between steps, and characters already waiting are released instead of serving out the rest. With the Custom Experience on.
+- The Musk Oil quest points at the General Store, where the oil is actually sold, instead of an Item Shop this server does not have. With the Custom Experience on, which is also what puts the oil on the counter — the two go together, or the quest would send players to an empty shelf.
+- Seven quests handed out rewards that did not match what they promised — among them one that skipped its Yang, experience and level-up entirely. Every server gets these: in each case the quest contradicts its own text, and the pack itself says which side was meant.
+
 ## 1.12.2 — 2026-08-12
 
 ### Fixed

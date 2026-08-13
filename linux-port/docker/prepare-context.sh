@@ -29,6 +29,14 @@
 #      game/rates/pack.sh              the server-files profile (rate maths)
 #      client-builder/pack/pack.sh     the same file again (client preparation)
 #
+#  It also PATCHES the staged tree, in the only window where that works -- after
+#  it is staged and before the image is built from it:
+#
+#      ../../files/fixes/apply.sh      defects in the shipped files, for every
+#                                      server, no switch
+#      ../../files/custom/apply.sh     the Custom Experience, when
+#                                      M2_CUSTOM_EXPERIENCE=1
+#
 #  Idempotent. Safe to re-run after editing the source.
 #
 #  Usage:
@@ -221,6 +229,28 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# The Custom Experience, resolved here because the two sections below are the
+# first things it changes.
+#
+# Two of the settings it carries are staged rather than patched -- they are
+# quests, and a quest is a file this script copies -- so they are simply given
+# different defaults when the switch is on. Both of them are DEFAULTS and not
+# overrides: an operator who names a movement-speed bonus of their own, or who
+# says M2_HIGH_RISK=0 because they do not want that mode on their server, keeps
+# what they asked for. The installer resolves both explicitly and writes them
+# into .env, so these two lines are what makes a direct
+# `M2_CUSTOM_EXPERIENCE=1 ./prepare-context.sh' behave the same way.
+CUSTOM_EXPERIENCE="${M2_CUSTOM_EXPERIENCE:-0}"
+case "$CUSTOM_EXPERIENCE" in
+  1|true|yes|on|TRUE|YES|ON) CUSTOM_EXPERIENCE=1 ;;
+  *)                         CUSTOM_EXPERIENCE=0 ;;
+esac
+if [ "$CUSTOM_EXPERIENCE" = "1" ]; then
+  M2_MOVE_SPEED_BONUS="${M2_MOVE_SPEED_BONUS:-20}"
+  M2_HIGH_RISK="${M2_HIGH_RISK:-1}"
+fi
+
+# -----------------------------------------------------------------------------
 say "movement-speed bonus"
 # A second quest, staged the same way and for the same reason: it runs inside
 # the game cores, so it belongs in the GAME context and is compiled by the same
@@ -255,12 +285,82 @@ else
   info "no movement-speed bonus (M2_MOVE_SPEED_BONUS=0)"
 fi
 
+# -----------------------------------------------------------------------------
+say "High Risk mode"
+# A third quest, staged the same way and for the same reason: it runs inside the
+# game cores. It owns the player's choice of mode and nothing else -- what the
+# choice MEANS is compiled into the cores (high_risk.h and the four places that
+# include it), because this quest engine has no death event and its affect API
+# cannot be shared with the movement-speed quest.
+#
+# Nothing is substituted into the file: the two bonus percentages are named
+# constants in high_risk.h, not text in here, because they are read by the core
+# and not by the quest.
+#
+# M2_HIGH_RISK=0 leaves it out. The core change is inert without it -- no
+# character can set the flag, so every check falls through to stock behaviour --
+# which is what makes the mode removable without rebuilding the source.
+if [ "${M2_HIGH_RISK:-1}" = "1" ] && [ -f "$PANEL_SRC/high_risk.quest" ]; then
+  cp -a "$PANEL_SRC/high_risk.quest" "$HERE/game/quest/high_risk.quest"
+  info "high_risk.quest -> game/quest/  (offered at level 15, switchable at any Guardian)"
+elif [ "${M2_HIGH_RISK:-1}" = "1" ]; then
+  rm -f "$HERE/game/quest/high_risk.quest"
+  info "WARNING: $PANEL_SRC/high_risk.quest not found -- no High Risk mode"
+else
+  rm -f "$HERE/game/quest/high_risk.quest"
+  info "High Risk mode NOT staged (M2_HIGH_RISK=0)"
+fi
+
 if [ -f "$PANEL_SRC/web_admin_schema.sql" ]; then
   cp -a "$PANEL_SRC/web_admin_schema.sql" "$HERE/panel/schema/"
   info "web_admin_schema.sql"
 else
   info "WARNING: web_admin_schema.sql not found -- the panel's queue and rates"
   info "         tables will not be created and those pages will fail."
+fi
+
+# -----------------------------------------------------------------------------
+say "fixes for the shipped server files"
+# Defects in the package itself, applied to every server this project builds.
+# There is no switch: the worst of them credited a quest's 150,000 Yang fee to
+# the player instead of charging it, repeatably, which is an open money supply
+# on any server running these files untouched.
+#
+# This runs HERE and not earlier because share/ has just been staged. It is also
+# why these are scripts and not edits: fetch-sources.sh re-stages the tree from
+# the pristine archive on every assembly, so anything done to it by hand is gone
+# by the next update.
+if [ -f "$PANEL_SRC/fixes/apply.sh" ]; then
+  bash "$PANEL_SRC/fixes/apply.sh" --tree "$GAME_CTX" \
+    || die "the shipped-file fixes could not be applied (output above)"
+else
+  info "WARNING: $PANEL_SRC/fixes/apply.sh not found -- the quest reward"
+  info "         defects and the Dragon Lair money exploit are NOT fixed in"
+  info "         this build."
+fi
+
+# -----------------------------------------------------------------------------
+say "Custom Experience"
+# Everything behind the installer's "Enable Custom Experience?" question that is
+# a patch rather than a staged file: pick-up range, horse summoning, the horse
+# medal time gates, the bonus drop tables, the Musk Oil quest and the shop row
+# that makes its new wording true. The two settings that ARE staged files, High
+# Risk and the movement-speed bonus, were resolved further up.
+#
+# Turning the switch back off does not undo a database row that is already
+# there -- see the note in files/custom/shop_musk_oil.sql -- but it does stop
+# the file being staged, so the row is not re-applied on a server that never had
+# it. Everything else is undone by the re-stage that precedes this script.
+if [ "$CUSTOM_EXPERIENCE" = "1" ] && [ -f "$PANEL_SRC/custom/apply.sh" ]; then
+  bash "$PANEL_SRC/custom/apply.sh" --tree "$GAME_CTX" --schema "$HERE/panel/schema" \
+    || die "the Custom Experience could not be applied (output above)"
+elif [ "$CUSTOM_EXPERIENCE" = "1" ]; then
+  die "M2_CUSTOM_EXPERIENCE=1 but $PANEL_SRC/custom/apply.sh is not there.
+  Building anyway would produce a server that quietly has none of what was
+  asked for, which is the exact confusion this switch exists to end."
+else
+  rm -f "$HERE/panel/schema/shop_musk_oil.sql"
+  info "not enabled (M2_CUSTOM_EXPERIENCE=0)"
 fi
 
 # -----------------------------------------------------------------------------

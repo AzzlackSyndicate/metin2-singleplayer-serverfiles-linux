@@ -154,6 +154,12 @@ WANT_WEB_FLAG=""
 HAVE_WEB=0
 HAVE_DESKTOP=0
 
+# The Custom Experience -- see choose_custom_experience(). Empty for the same
+# reason WANT_WEB_FLAG is: it has to stay possible to tell "never said" from
+# "said no", because on an update the first means "keep what this server has"
+# and the second means "take it back out".
+CUSTOM_EXPERIENCE_FLAG=""
+
 # Snapshotted before the command line is read, so replay_command() can tell an
 # option somebody actually gave from a default that happens to equal it. Taken
 # from the variables rather than written out again, so changing a default above
@@ -427,6 +433,13 @@ usage() {
     --no-client           don't build the downloadable game client
     --web-client          install the browser client (~1.8 GB) without asking
     --no-web-client       don't install the browser client, and don't ask
+    --custom-experience   turn the Custom Experience on without asking: bigger
+                          pick-up range, a horse that always comes when called,
+                          no waiting between the Horse Medal steps, bonus drops
+                          on metins and bosses, Musk Oil in the General Store,
+                          High Risk offered, and everyone 20% faster on foot
+    --no-custom-experience
+                          leave the Custom Experience off, and don't ask
     --no-firewall         don't touch the firewall
     --help                this text
 
@@ -459,6 +472,8 @@ parse_args() {
             --no-client)     SKIP_CLIENT=1; WANT_DESKTOP=0; shift ;;
             --web-client)    WANT_WEB_FLAG=1; shift ;;
             --no-web-client) WANT_WEB_FLAG=0; shift ;;
+            --custom-experience)    CUSTOM_EXPERIENCE_FLAG=1; shift ;;
+            --no-custom-experience) CUSTOM_EXPERIENCE_FLAG=0; shift ;;
             --no-firewall)   SKIP_FIREWALL=1; shift ;;
             --address)       PUBLIC_ADDRESS="${2:-}"; shift 2 ;;
             --domain)        DOMAIN="${2:-}"; shift 2 ;;
@@ -772,8 +787,12 @@ explain_incomplete_context() {
 #  a package it never uses.
 # -----------------------------------------------------------------------------
 install_source_tools() {
-    _need="patch unzip git ca-certificates"
-    _check="patch unzip git"
+    # python3 is on the list because prepare-context.sh applies the shipped-file
+    # fixes and the Custom Experience with it. It is on every ordinary Debian
+    # and Ubuntu already; a minimal cloud image is where it is missing, and
+    # there the whole assembly would stop at the last step without it.
+    _need="patch unzip git ca-certificates python3"
+    _check="patch unzip git python3"
     if [ -z "$M2_SRC_REFERENCE_DIR" ] && [ -z "$M2_SRC_ARCHIVE" ]; then
         _need="$_need megatools p7zip-full"
         _check="$_check megatools"
@@ -795,8 +814,8 @@ install_source_tools() {
             # shellcheck disable=SC2086
             apt-get install -y -qq $_need >/dev/null 2>&1 || true ;;
         rhel)
-            [ "$DRY_RUN" = "1" ] && { info "[dry-run] yum install -y patch unzip git p7zip"; return 0; }
-            yum install -y -q patch unzip git p7zip >/dev/null 2>&1 || true ;;
+            [ "$DRY_RUN" = "1" ] && { info "[dry-run] yum install -y patch unzip git p7zip python3"; return 0; }
+            yum install -y -q patch unzip git p7zip python3 >/dev/null 2>&1 || true ;;
         *)
             : ;;   # fetch-sources.sh will say what is missing, in its own words
     esac
@@ -925,6 +944,100 @@ pointer_link() {  # pointer_link KEY -- the link, or nothing
     esac
 }
 
+# =============================================================================
+#  The Custom Experience -- one question, everything behind it
+# =============================================================================
+#
+#  Asked before anything large is downloaded, together with the other questions,
+#  because the answer has to be known before the server is assembled: most of
+#  what it turns on is compiled into the game image, and an image cannot be
+#  asked afterwards.
+#
+#  Where the answer comes from, in order, first one wins:
+#
+#      M2_CUSTOM_EXPERIENCE in the environment   (unattended, first install)
+#      --custom-experience / --no-custom-experience
+#      what this server was set to last time     (.env, so an update keeps it)
+#      the question, which defaults to no
+#
+choose_custom_experience() {
+    step "Custom Experience"
+
+    _prev_custom=$(env_get "$INSTALL_DIR/.env" M2_CUSTOM_EXPERIENCE 2>/dev/null || true)
+    case "$_prev_custom" in 1|true|yes|on|TRUE|YES|ON) _prev_custom=1 ;; *) _prev_custom=0 ;; esac
+
+    if [ -n "${M2_CUSTOM_EXPERIENCE:-}" ]; then
+        _want="$M2_CUSTOM_EXPERIENCE"
+        info "taken from M2_CUSTOM_EXPERIENCE in the environment"
+    elif [ -n "$CUSTOM_EXPERIENCE_FLAG" ]; then
+        _want="$CUSTOM_EXPERIENCE_FLAG"
+        info "taken from the option you passed"
+    else
+        say "This server can be left exactly as the original files play, or it"
+        say "can be set up the friendlier way this project has been using:"
+        say ""
+        say "  - items and Yang are picked up from twice as far away"
+        say "  - calling your horse always works, instead of usually failing"
+        say "  - the Horse Medal steps no longer make you wait until tomorrow"
+        say "  - metin stones and bosses drop useful extras: blessing scrolls,"
+        say "    reading potions, bravery capes and more"
+        say "  - the General Store stocks the Musk Oil that one quest asks for"
+        say "  - players may choose High Risk at level 15, and everyone walks"
+        say "    and runs 20% faster"
+        say ""
+        say "None of this changes rates, and none of it touches your existing"
+        say "characters. You can turn it off again later by running the"
+        say "installer with --no-custom-experience."
+        say ""
+        # ask_yes_no() returns yes whenever --yes was passed, which is right for
+        # every other question in this file because every other question
+        # defaults to yes. This one defaults to NO, so taking ask_yes_no's
+        # answer under --yes would switch the whole thing on for somebody who
+        # asked for nothing but silence. --yes means "don't ask me, take the
+        # default", and the default here is no.
+        if [ "$ASSUME_YES" = "1" ]; then
+            _want="$_prev_custom"
+            info "--yes, so this keeps what is already set here: $([ "$_prev_custom" = "1" ] && echo on || echo off)"
+        else
+            _def=$([ "$_prev_custom" = "1" ] && echo y || echo n)
+            if ask_yes_no "Enable Custom Experience?" "$_def"; then _want=1; else _want=0; fi
+        fi
+    fi
+
+    case "$_want" in 1|true|yes|on|TRUE|YES|ON) M2_CUSTOM_EXPERIENCE=1 ;; *) M2_CUSTOM_EXPERIENCE=0 ;; esac
+    export M2_CUSTOM_EXPERIENCE
+
+    # The two settings the Custom Experience carries that already had switches
+    # of their own. Both are given a value here rather than left to
+    # prepare-context.sh, because .env has to record what this build actually
+    # used -- an .env that says 0 beside a server that runs at 20 is how the
+    # last round of hand edits became impossible to account for.
+    #
+    # Turning it ON is what brings them with it, and only the first time: a
+    # number the operator has since chosen for themselves is theirs, and is
+    # carried forward untouched by every later update.
+    if [ "$M2_CUSTOM_EXPERIENCE" = "1" ]; then
+        # An explicit M2_HIGH_RISK=0 still wins -- somebody may want everything
+        # here except a mode that lets players kill each other.
+        if [ -z "${M2_HIGH_RISK:-}" ]; then
+            M2_HIGH_RISK=$(env_get "$INSTALL_DIR/.env" M2_HIGH_RISK 2>/dev/null || true)
+        fi
+        case "${M2_HIGH_RISK:-}" in 0|false|no|off|FALSE|NO|OFF) M2_HIGH_RISK=0 ;; *) M2_HIGH_RISK=1 ;; esac
+        export M2_HIGH_RISK
+
+        if [ -z "${M2_MOVE_SPEED_BONUS:-}" ] && [ "$_prev_custom" != "1" ]; then
+            M2_MOVE_SPEED_BONUS=20
+        fi
+    fi
+
+    if [ "$M2_CUSTOM_EXPERIENCE" = "1" ]; then
+        good "Custom Experience: on."
+    else
+        info "Custom Experience: off -- the server files play as they shipped."
+    fi
+    return 0
+}
+
 run_fetch_sources() {
     # WHERE THE SERVER FILES COME FROM.
     #
@@ -1004,6 +1117,21 @@ run_fetch_sources() {
     esac
     export M2_MOVE_SPEED_BONUS
 
+    # The Custom Experience is decided here for the same reason, and read back
+    # out of .env the same way, so an update keeps what this server was set to.
+    # choose_custom_experience() has normally answered this already -- it asks
+    # before anything large is downloaded -- and this is what covers the paths
+    # that reach the assembly without it.
+    if [ -z "${M2_CUSTOM_EXPERIENCE:-}" ]; then
+        M2_CUSTOM_EXPERIENCE=$(env_get "$INSTALL_DIR/.env" M2_CUSTOM_EXPERIENCE 2>/dev/null || true)
+    fi
+    case "${M2_CUSTOM_EXPERIENCE:-}" in
+        1|true|yes|on|TRUE|YES|ON) M2_CUSTOM_EXPERIENCE=1 ;;
+        *)                         M2_CUSTOM_EXPERIENCE=0 ;;
+    esac
+    export M2_CUSTOM_EXPERIENCE
+    [ -n "${M2_HIGH_RISK:-}" ] && export M2_HIGH_RISK
+
     export M2_SRC_ARCHIVE M2_SRC_REFERENCE_DIR M2_SRC_URL M2_SRC_CACHE
 
     _rc=0
@@ -1018,7 +1146,7 @@ run_fetch_sources() {
 
   On Debian or Ubuntu that is usually:
 
-      apt-get install -y patch unzip megatools p7zip-full" ;;
+      apt-get install -y patch unzip megatools p7zip-full python3" ;;
         4) die "The server-file package could not be downloaded.
 
   If the address above is the MEGA share, the overwhelmingly likely reason is
@@ -1108,6 +1236,11 @@ replay_command() {
     [ -n "$TLS_EMAIL" ] && _opt="$_opt --email $(_q "$TLS_EMAIL")"
     [ "$LOCAL_ONLY" = "1" ]    && _opt="$_opt --local"
     [ "$SKIP_CLIENT" = "1" ]   && _opt="$_opt --no-client"
+    # Named either way round, because this is the command the panel shows an
+    # operator to update with -- and it has to rebuild the server they have,
+    # not the one the defaults would produce.
+    [ "${M2_CUSTOM_EXPERIENCE:-0}" = "1" ] && _opt="$_opt --custom-experience"
+    [ "${M2_CUSTOM_EXPERIENCE:-0}" = "0" ] && _opt="$_opt --no-custom-experience"
     [ "$SKIP_FIREWALL" = "1" ] && _opt="$_opt --no-firewall"
     [ "$AUTH_PORT"  != "$DEF_AUTH_PORT"  ] && _opt="$_opt --auth-port $AUTH_PORT"
     [ "$GAME_PORTS" != "$DEF_GAME_PORTS" ] && _opt="$_opt --game-ports $(_q "$GAME_PORTS")"
@@ -1605,6 +1738,21 @@ write_env() {
     case "$BROWSER_PLAY" in 1|true|yes|on) BROWSER_PLAY=1 ;; *) BROWSER_PLAY=0 ;; esac
     env_set "$_env" M2_BROWSER_PLAY "$BROWSER_PLAY"
     env_set "$_env" M2_MOVE_SPEED_BONUS "${M2_MOVE_SPEED_BONUS:-0}"
+
+    # Written down so the next update replays the same server rather than a
+    # slightly different one. This is the whole point of the switch: what a
+    # server is running should be readable from the server, not remembered.
+    env_set "$_env" M2_CUSTOM_EXPERIENCE "${M2_CUSTOM_EXPERIENCE:-0}"
+
+    # High Risk is only resolved when the Custom Experience is on, so on every
+    # other run this reads back what is already here rather than writing the
+    # default over it. Without that, turning the Custom Experience off would
+    # also quietly turn High Risk back ON for the one operator who had
+    # deliberately set it to 0.
+    _hr="${M2_HIGH_RISK:-}"
+    [ -z "$_hr" ] && _hr=$(env_get "$_env" M2_HIGH_RISK 2>/dev/null || true)
+    case "$_hr" in 0|false|no|off|FALSE|NO|OFF) _hr=0 ;; *) _hr=1 ;; esac
+    env_set "$_env" M2_HIGH_RISK "$_hr"
 
     # WHERE THE DESKTOP CLIENT COMES FROM.
     #
@@ -3048,6 +3196,10 @@ main() {
     # only whether a server is already here, which is one file test.
     detect_existing_install
     choose_clients
+    # Asked here for the same reason, and it must be before fetch_stack: almost
+    # everything the answer turns on is patched into the server tree between
+    # staging it and building the image from it, which happens in there.
+    choose_custom_experience
 
     fetch_stack
     choose_address

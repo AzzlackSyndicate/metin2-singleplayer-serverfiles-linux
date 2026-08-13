@@ -284,6 +284,18 @@ RUN set -eux; \
                find /tmp/qc-work/object; exit 1; }; \
         cp -a /tmp/qc-work/speed_boost.quest "$out/speed_boost.quest"; \
       fi; \
+      if [ -f /quest-add/high_risk.quest ]; then \
+        sed 's/\r$//' /quest-add/high_risk.quest > /tmp/qc-work/high_risk.quest; \
+        ( cd /tmp/qc-work && /src/server/game/src/quest/qc high_risk.quest ); \
+        test -s /tmp/qc-work/object/state/high_risk \
+          || { echo "FATAL: qc produced no state file for high_risk ($lang)"; \
+               find /tmp/qc-work/object; exit 1; }; \
+        test -d /tmp/qc-work/object/20354/chat \
+          || { echo "FATAL: qc produced no Guardian chat handler for high_risk ($lang) --"; \
+               echo "       that is the only way a player can leave High Risk again"; \
+               find /tmp/qc-work/object; exit 1; }; \
+        cp -a /tmp/qc-work/high_risk.quest "$out/high_risk.quest"; \
+      fi; \
       cp -a /tmp/qc-work/object "$out/object"; \
       cp -a /tmp/qc-work/web_admin.quest "$out/web_admin.quest"; \
       cp -a /tmp/qc-work/quest_functions "$out/quest_functions"; \
@@ -292,6 +304,10 @@ RUN set -eux; \
       if [ -f /quest-add/speed_boost.quest ]; then \
         grep -qx 'speed_boost.quest' "$out/locale_list" \
           || echo 'speed_boost.quest' >> "$out/locale_list"; \
+      fi; \
+      if [ -f /quest-add/high_risk.quest ]; then \
+        grep -qx 'high_risk.quest' "$out/locale_list" \
+          || echo 'high_risk.quest' >> "$out/locale_list"; \
       fi; \
       find "$out" -type d -exec chmod 0755 {} +; \
       find "$out" -type f -exec chmod 0644 {} +; \

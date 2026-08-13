@@ -103,7 +103,12 @@ $script:SrcUrl       = if ($env:M2_SRC_URL)           { $env:M2_SRC_URL }       
 $script:SrcVolume    = if ($env:M2_SRC_VOLUME) { $env:M2_SRC_VOLUME } else { 'metin2-src-cache' }
 
 # Tagged with a version so that changing the recipe below rebuilds it.
-$script:FetcherImage = 'metin2-src-fetcher:1'
+# The tag carries a number so that changing what is IN the image reaches PCs
+# that already have one: Initialize-FetcherImage keeps whatever it finds under
+# this name, so a rebuild has to be asked for by asking for a different name.
+# :2 added python3, without which the Custom Experience and the shipped-file
+# fixes cannot be applied to the staged tree.
+$script:FetcherImage = 'metin2-src-fetcher:2'
 
 # Where this script is, when it is a file at all. Run as `irm ... | iex' it is
 # not, and $PSScriptRoot is then empty -- which is exactly the answer we want,
@@ -153,6 +158,16 @@ $script:ClientHostErr     = ''
 $script:LocalOnly         = $true
 $script:DryRun            = $false
 $script:AssumeYes         = $false
+
+# The Custom Experience -- see Select-CustomExperience. The flag stays $null
+# unless -CustomExperience or -NoCustomExperience was actually given, for the
+# same reason WantWebFlag does: on an update, "never said" means keep what this
+# server has and "said no" means take it back out, and those must not collapse
+# into one another.
+$script:CustomExperience     = $false
+$script:CustomExperienceFlag = $null
+$script:HighRisk             = ''
+$script:MoveSpeedBonus       = ''
 
 # =============================================================================
 #  Talking to the human
@@ -864,7 +879,7 @@ function Initialize-FetcherImage {
             'RUN apt-get update \'
             ' && apt-get install -y --no-install-recommends \'
             '      bash tar patch findutils coreutils diffutils grep sed gawk \'
-            '      unzip p7zip-full megatools git curl ca-certificates \'
+            '      unzip p7zip-full megatools git curl ca-certificates python3 \'
             ' && rm -rf /var/lib/apt/lists/*'
             ''
         ) -join "`n"
@@ -1075,11 +1090,23 @@ function Invoke-SourceFetch {
     #
     # Read back out of .env on an update so the setting survives; on a first
     # install it comes from the environment ($env:M2_MOVE_SPEED_BONUS = '100').
+    # Select-CustomExperience may already have put a number here -- the 20 that
+    # comes with switching the Custom Experience on -- and that beats the .env
+    # of an install which did not have it yet, which is exactly the case where
+    # .env still says 0.
     $speed = $env:M2_MOVE_SPEED_BONUS
+    if (-not $speed) { $speed = $script:MoveSpeedBonus }
     if (-not $speed) { $speed = Get-EnvValue (Join-Path $script:InstallDir '.env') 'M2_MOVE_SPEED_BONUS' }
     if ($speed -notmatch '^[0-9]+$') { $speed = '0' }
     $script:MoveSpeedBonus = $speed
     $runArgs += @('-e', "M2_MOVE_SPEED_BONUS=$speed")
+
+    # The Custom Experience is decided in the same place and for the same
+    # reason: prepare-context.sh, which runs inside this container, is the one
+    # moment at which the staged tree exists and the image has not been built
+    # from it yet. Select-CustomExperience has answered this already.
+    $runArgs += @('-e', "M2_CUSTOM_EXPERIENCE=$(if ($script:CustomExperience) {'1'} else {'0'})")
+    if ($script:HighRisk) { $runArgs += @('-e', "M2_HIGH_RISK=$($script:HighRisk)") }
 
     $runArgs += @($script:FetcherImage,
                   'sh', '/work/repo/linux-port/fetch-sources.sh', 'fetch',
@@ -1611,6 +1638,15 @@ downloaded server files, the client -- is kept either way.
     if (-not $sp) { $sp = Get-EnvValue $envPath 'M2_MOVE_SPEED_BONUS' }
     if ($sp -notmatch '^[0-9]+$') { $sp = '0' }
     Set-EnvValue $envPath 'M2_MOVE_SPEED_BONUS' $sp
+
+    # Written down so the next update replays the same server rather than a
+    # slightly different one. This is the whole point of the switch: what a
+    # server is running should be readable from the server, not remembered.
+    Set-EnvValue $envPath 'M2_CUSTOM_EXPERIENCE' $(if ($script:CustomExperience) { '1' } else { '0' })
+    $hr = $script:HighRisk
+    if (-not $hr) { $hr = Get-EnvValue $envPath 'M2_HIGH_RISK' }
+    if ($hr -notmatch '^[01]$') { $hr = '1' }
+    Set-EnvValue $envPath 'M2_HIGH_RISK' $hr
 
     # Where the desktop client comes from: its own archive since the package was
     # split. Left empty, the builder looks for a client inside the server files,
@@ -2429,6 +2465,98 @@ function Test-InstalledClients {
     }
 }
 
+# =============================================================================
+#  The Custom Experience -- one question, everything behind it
+# =============================================================================
+#
+#  Asked before anything large is downloaded, because the answer has to be known
+#  before the server is assembled: most of what it turns on is patched into the
+#  server tree between staging it and building the image from it, and an image
+#  cannot be asked afterwards.
+#
+#  Where the answer comes from, in order, first one wins:
+#
+#      $env:M2_CUSTOM_EXPERIENCE          (unattended, first install)
+#      -CustomExperience / -NoCustomExperience
+#      what this install was set to last time   (.env, so an update keeps it)
+#      the question, which defaults to no
+#
+function Select-CustomExperience {
+    Write-Step 'Custom Experience'
+
+    $envPath = Join-Path $script:InstallDir '.env'
+    $prev = (Get-EnvValue $envPath 'M2_CUSTOM_EXPERIENCE') -in @('1', 'true', 'yes', 'on')
+
+    $want = $null
+    if ($env:M2_CUSTOM_EXPERIENCE) {
+        $want = $env:M2_CUSTOM_EXPERIENCE -in @('1', 'true', 'yes', 'on')
+        Write-Info 'taken from $env:M2_CUSTOM_EXPERIENCE'
+    } elseif ($null -ne $script:CustomExperienceFlag) {
+        $want = [bool]$script:CustomExperienceFlag
+        Write-Info 'taken from the option you passed'
+    } else {
+        Write-Say 'This server can be left exactly as the original files play, or it'
+        Write-Say 'can be set up the friendlier way this project has been using:'
+        Write-Say ''
+        Write-Say '  - items and Yang are picked up from twice as far away'
+        Write-Say '  - calling your horse always works, instead of usually failing'
+        Write-Say '  - the Horse Medal steps no longer make you wait until tomorrow'
+        Write-Say '  - metin stones and bosses drop useful extras: blessing scrolls,'
+        Write-Say '    reading potions, bravery capes and more'
+        Write-Say '  - the General Store stocks the Musk Oil that one quest asks for'
+        Write-Say '  - players may choose High Risk at level 15, and everyone walks'
+        Write-Say '    and runs 20% faster'
+        Write-Say ''
+        Write-Say 'None of this changes rates, and none of it touches characters you'
+        Write-Say 'already have. You can turn it off again later by running the'
+        Write-Say 'installer with -NoCustomExperience.'
+        Write-Say ''
+        # Confirm-YesNo answers yes to everything under -Yes, which is right for
+        # every other question in this file because every other question
+        # defaults to yes. This one defaults to NO, so taking that answer would
+        # switch the whole thing on for somebody who asked for nothing but
+        # silence. -Yes means "don't ask me, take the default", and the default
+        # here is no.
+        if ($script:AssumeYes) {
+            $want = $prev
+            Write-Info "-Yes, so this keeps what is already set here: $(if ($prev) {'on'} else {'off'})"
+        } else {
+            $want = Confirm-YesNo 'Enable Custom Experience?' $prev
+        }
+    }
+
+    $script:CustomExperience = [bool]$want
+
+    # The two settings the Custom Experience carries that already had switches
+    # of their own. Both are given a value here rather than left to
+    # prepare-context.sh, because .env has to record what this build actually
+    # used -- an .env that says 0 beside a server running at 20 is how weeks of
+    # hand-made changes became impossible to account for.
+    #
+    # Turning it ON is what brings them with it, and only the first time: a
+    # number the operator has since chosen is theirs, and every later update
+    # carries it forward untouched.
+    if ($script:CustomExperience) {
+        # An explicit $env:M2_HIGH_RISK = '0' still wins -- somebody may want
+        # everything here except a mode that lets players kill each other.
+        $hr = $env:M2_HIGH_RISK
+        if (-not $hr) { $hr = Get-EnvValue $envPath 'M2_HIGH_RISK' }
+        $script:HighRisk = if ($hr -in @('0', 'false', 'no', 'off')) { '0' } else { '1' }
+
+        if ((-not $env:M2_MOVE_SPEED_BONUS) -and (-not $prev)) {
+            $script:MoveSpeedBonus = '20'
+        }
+    } else {
+        $script:HighRisk = ''
+    }
+
+    if ($script:CustomExperience) {
+        Write-Good 'Custom Experience: on.'
+    } else {
+        Write-Info 'Custom Experience: off -- the server files play as they shipped.'
+    }
+}
+
 function Select-Clients {
     Write-Step 'Which clients your players get'
 
@@ -3130,6 +3258,10 @@ function Invoke-Metin2Install {
         # knows what it wants. Not given, the installer asks once.
         [switch]$WebClient,
         [switch]$NoWebClient,
+        # The same arrangement for the Custom Experience: given, the question is
+        # skipped; not given, the installer asks once and defaults to no.
+        [switch]$CustomExperience,
+        [switch]$NoCustomExperience,
         [switch]$Help
     )
 
@@ -3152,6 +3284,13 @@ function Invoke-Metin2Install {
     -PanelPort N       admin panel port (default: 7788)
     -WebClient         install the browser client (~1.8 GB) without asking
     -NoWebClient       don't install the browser client, and don't ask
+    -CustomExperience  turn the Custom Experience on without asking: bigger
+                       pick-up range, a horse that always comes when called,
+                       no waiting between the Horse Medal steps, bonus drops
+                       on metins and bosses, Musk Oil in the General Store,
+                       High Risk offered, and everyone 20% faster on foot
+    -NoCustomExperience
+                       leave the Custom Experience off, and don't ask
     -Help              this text
 
   Where the server comes from:
@@ -3185,6 +3324,8 @@ function Invoke-Metin2Install {
     # which is what lets a re-run tell a deliberate no from a default.
     if     ($WebClient)   { $script:WantWebFlag = $true  }
     elseif ($NoWebClient) { $script:WantWebFlag = $false }
+    if     ($CustomExperience)   { $script:CustomExperienceFlag = $true  }
+    elseif ($NoCustomExperience) { $script:CustomExperienceFlag = $false }
     $script:InstallDir = if ($InstallDir) { $InstallDir }
                          elseif ($env:M2_INSTALL_DIR) { $env:M2_INSTALL_DIR }
                          else { Join-Path $env:USERPROFILE 'Metin2Server' }
@@ -3223,6 +3364,11 @@ function Invoke-Metin2Install {
         # to serve.
         Test-ExistingInstall
         Select-Clients
+        # Asked here for the same reason, and it must be before Get-Stack:
+        # almost everything the answer turns on is patched into the server tree
+        # between staging it and building the image from it, which happens in
+        # there.
+        Select-CustomExperience
 
         Get-Stack
         Write-Configuration
