@@ -437,7 +437,8 @@ usage() {
                           pick-up range, a horse that always comes when called,
                           no waiting between the Horse Medal steps, bonus drops
                           on metins and bosses, Musk Oil in the General Store,
-                          High Risk offered, and everyone 20% faster on foot
+                          skill books that stack, High Risk offered, and
+                          everyone 20% faster on foot
     --no-custom-experience
                           leave the Custom Experience off, and don't ask
     --no-firewall         don't touch the firewall
@@ -982,6 +983,8 @@ choose_custom_experience() {
         say "  - metin stones and bosses drop useful extras: blessing scrolls,"
         say "    reading potions, bravery capes and more"
         say "  - the General Store stocks the Musk Oil that one quest asks for"
+        say "  - skill books for the same skill stack instead of filling the"
+        say "    inventory one slot at a time"
         say "  - players may choose High Risk at level 15, and everyone walks"
         say "    and runs 20% faster"
         say ""

@@ -17,6 +17,25 @@ every version here.
 
 ---
 
+## 1.15.0 — 2026-08-13
+
+### Fixed
+
+- **High Risk did nothing at all, on every server built from this repository.** The mode was offered at level 15, the player chose it, the choice was saved — and then nothing happened: they were not attackable, not marked, dropped nothing extra on death and got none of the bonuses. Only the *quest* half was ever staged into a build. The half that gives the choice meaning is a change to the game core, and that change existed only on the machine where it had been applied by hand; the server tree is re-staged from the pristine archive on every build, so it was never in anyone else's server. It is now applied during the build, every time, and the build refuses to start if it is missing rather than quietly producing a server where the mode is decorative.
+- If you have High Risk switched on, this is the update that makes it real. Nobody has to re-choose anything: the choice was being recorded correctly the whole time and takes effect the moment the cores are rebuilt.
+
+### Changed
+
+- **High Risk sets your combat mode for you.** Choosing the mode put you in reach of everyone else in it without letting you fight back: whether *you* may hit someone is decided by your own combat mode, and that is Peace until you change it by hand. It is now set to Free for as long as High Risk is on, and kept there — the game quietly resets it in a few places, such as when a duel ends, and it comes straight back. Game masters and characters below the protection level are left alone, exactly as the rest of the game leaves them alone.
+- **High Risk is now a pool, not a licence.** It only ever pairs you with other players who also chose it. Someone in No Risk can no longer kill a High Risk player and take what they drop, and a High Risk player can no longer hunt someone who never opted in — neither direction works, inside an empire or across empires. Both of you chose, or there is no fight. Guild wars, castle sieges, duels and the arena are settled before this rule and keep working between the two modes, because those are consensual on their own terms.
+- **A High Risk death costs more.** Dying with the mode on now drops something from your bags **one time in two** (was one in ten) and something you are wearing **one time in ten** (was one in five). Quantities are unchanged — eight items from the bags, one worn item — and so is everything about which items can be lost at all. Characters who are simply Cruel are not affected: they still drop on exactly the odds the game shipped with, which is what the mode borrowed before and no longer does.
+
+### Added
+
+- **Skill books stack, and only with books of the same skill.** Part of the Custom Experience. Books for one skill now merge into a single slot instead of taking a fresh one each, whether you pick them up, drag them together or store them in the chest. Books for *different* skills never merge, and this is not a promise the change had to make good on itself: the generic Skill Book is one and the same item number for every skill it can teach — it carries the skill in a socket rather than in its number — and all three places the server merges items already compare every socket before they combine anything. Two books that teach different things differ there and are refused.
+- Reading one book out of a stack now spends one book. The core deleted the *item* when a book was read, which was the same thing while books could not stack and would have thrown away the whole pile once they could, so the two changes are made together and neither is applied without the other.
+- Off unless the Custom Experience is on. Unlike the Blessing Scroll, there is nothing in the shipped files that contradicts itself here — all 45 skill books agree that they do not stack — so this is a deliberate change rather than a fix, and it sits with the other deliberate ones.
+
 ## 1.13.1 — 2026-08-13
 
 ### Fixed

@@ -80,10 +80,12 @@ quest high_risk begin
 			end
 
 			say("")
-			say("High Risk: anyone may kill you, anywhere, your own")
-			say("empire included, and they pay no price for it. In")
-			say("exchange, 50% more experience and 50% more drops --")
-			say("and you drop items when you die, as the cruellest do.")
+			say("High Risk: others who chose it may kill you, anywhere,")
+			say("your own empire included, and they pay no price for it.")
+			say("Those who did not choose it cannot touch you -- and you")
+			say("cannot touch them. In exchange, 50% more experience and")
+			say("50% more drops, and you drop items when you die, as the")
+			say("cruellest do.")
 			say("")
 			say("No Risk: the ordinary rules.")
 
@@ -92,9 +94,10 @@ quest high_risk begin
 			if answer == 1 then
 				pc.setqf("mode", 1)
 				say_title("High Risk")
-				say("Then you are free game, and it shows. Any Guardian")
-				say("or City Guard will take it back.")
-				syschat("[Risk] High Risk: +50% experience, +50% drops. Anyone may kill you, your own empire included, and you drop items when they do.")
+				say("Then you are free game to the others who chose it,")
+				say("and it shows. Any Guardian or City Guard will take")
+				say("it back.")
+				syschat("[Risk] High Risk: +50% experience, +50% drops. Others in High Risk may kill you anywhere, your own empire included, and you drop items when they do. No Risk players cannot fight you, and you cannot fight them.")
 			else
 				pc.setqf("mode", 0)
 				say_title("No Risk")

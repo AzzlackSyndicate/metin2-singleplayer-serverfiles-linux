@@ -16,6 +16,9 @@
 #      set_horse_summon_always_succeeds.py    calling a horse always works
 #      remove_horse_medal_timegates.py        no waiting out real time
 #      musk_oil_from_the_general_store.py     the quest points where the oil is
+#      stack_skill_books.py                   books of one skill merge into one
+#                                             stack; books of different skills
+#                                             still never do
 #      gen_drops.py + targets.txt             a bonus drop group on 283 metins
 #                                             and bosses
 #      shop_musk_oil.sql                      the oil on the shop's counter
@@ -80,6 +83,13 @@ python3 "$HERE/remove_horse_medal_timegates.py"
 
 say "Musk Oil quest wording"
 python3 "$HERE/musk_oil_from_the_general_store.py"
+
+say "stackable skill books"
+# The only patch here that touches the item table AND the core in one go, and
+# it refuses to do one without the other: stackable books against a core that
+# still deletes the item object on reading would destroy a whole stack per book
+# read. See the head of the script for why that is not a theoretical worry.
+python3 "$HERE/stack_skill_books.py"
 
 # -----------------------------------------------------------------------------
 say "bonus drops on metins and bosses"

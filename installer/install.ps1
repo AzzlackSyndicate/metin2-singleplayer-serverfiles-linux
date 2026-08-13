@@ -2504,6 +2504,8 @@ function Select-CustomExperience {
         Write-Say '  - metin stones and bosses drop useful extras: blessing scrolls,'
         Write-Say '    reading potions, bravery capes and more'
         Write-Say '  - the General Store stocks the Musk Oil that one quest asks for'
+        Write-Say '  - skill books for the same skill stack instead of filling the'
+        Write-Say '    inventory one slot at a time'
         Write-Say '  - players may choose High Risk at level 15, and everyone walks'
         Write-Say '    and runs 20% faster'
         Write-Say ''
@@ -3301,7 +3303,8 @@ function Invoke-Metin2Install {
                        pick-up range, a horse that always comes when called,
                        no waiting between the Horse Medal steps, bonus drops
                        on metins and bosses, Musk Oil in the General Store,
-                       High Risk offered, and everyone 20% faster on foot
+                       skill books that stack, High Risk offered, and
+                       everyone 20% faster on foot
     -NoCustomExperience
                        leave the Custom Experience off, and don't ask
     -Help              this text

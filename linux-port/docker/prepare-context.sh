@@ -300,9 +300,34 @@ say "High Risk mode"
 # M2_HIGH_RISK=0 leaves it out. The core change is inert without it -- no
 # character can set the flag, so every check falls through to stock behaviour --
 # which is what makes the mode removable without rebuilding the source.
+#
+# THE CORE HALF USED TO BE MISSING HERE, AND THAT IS WORTH SPELLING OUT. For a
+# while this block staged the quest and nothing else, while the comment above
+# said the meaning was "compiled into the cores". It was -- but only on the one
+# machine where files/high_risk/patch_core.py had been run by hand. Every server
+# built from this repository got a quest that set a flag no code ever read: the
+# offer appeared at level 15, the player chose High Risk, and absolutely nothing
+# happened. No killer flag, so not attackable and not marked; no Cruel drop
+# band; no bonuses. It looked like a broken feature rather than a missing one,
+# which is exactly the kind of silence this project tries not to ship.
+#
+# So the C++ half is applied right here, against the tree that is about to be
+# compiled, every time. --core-only keeps it off the repository: the quest above
+# and the Dockerfile's qc stage are already in the checkout and must not be
+# rewritten during a build.
 if [ "${M2_HIGH_RISK:-1}" = "1" ] && [ -f "$PANEL_SRC/high_risk.quest" ]; then
   cp -a "$PANEL_SRC/high_risk.quest" "$HERE/game/quest/high_risk.quest"
   info "high_risk.quest -> game/quest/  (offered at level 15, switchable at any Guardian)"
+
+  [ -f "$PANEL_SRC/high_risk/patch_core.py" ] \
+    || die "M2_HIGH_RISK=1 and high_risk.quest is staged, but
+  $PANEL_SRC/high_risk/patch_core.py is missing. Building now would produce the
+  exact failure that script exists to prevent: a quest whose flag nothing reads."
+  command -v python3 >/dev/null 2>&1 \
+    || die "python3 is needed to apply the High Risk core change.
+  On Debian or Ubuntu: apt-get install -y python3"
+  python3 "$PANEL_SRC/high_risk/patch_core.py" --core-only --server "$HERE" \
+    || die "the High Risk core change could not be applied (output above)"
 elif [ "${M2_HIGH_RISK:-1}" = "1" ]; then
   rm -f "$HERE/game/quest/high_risk.quest"
   info "WARNING: $PANEL_SRC/high_risk.quest not found -- no High Risk mode"
@@ -343,9 +368,10 @@ fi
 say "Custom Experience"
 # Everything behind the installer's "Enable Custom Experience?" question that is
 # a patch rather than a staged file: pick-up range, horse summoning, the horse
-# medal time gates, the bonus drop tables, the Musk Oil quest and the shop row
-# that makes its new wording true. The two settings that ARE staged files, High
-# Risk and the movement-speed bonus, were resolved further up.
+# medal time gates, the bonus drop tables, stackable skill books, the Musk Oil
+# quest and the shop row that makes its new wording true. The two settings that
+# ARE staged files, High Risk and the movement-speed bonus, were resolved
+# further up.
 #
 # Turning the switch back off does not undo a database row that is already
 # there -- see the note in files/custom/shop_musk_oil.sql -- but it does stop
