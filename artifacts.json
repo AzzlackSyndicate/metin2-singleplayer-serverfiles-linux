@@ -5,11 +5,11 @@
   "_fallbacks": "Every *_url may be followed by *_url_fallback and *_url_fallback2 holding the SAME file somewhere else. A fetcher walks the list top to bottom and stops at the first one that arrives with the right sha256 -- so a fallback is not a second-best copy, it is the identical archive and it is checked against the same sum. This exists because an anonymous MEGA share answers '509 over quota' once the OWNER's daily allowance is spent, which is a wait of hours through no fault of the person installing. A fallback turns that into a wait of seconds. Leave a fallback empty and nothing changes; the list simply has one entry.",
 
   "_engine": "The browser client's own code: index.html, index.js, index.wasm, index.dev, webfs.js, serve-webfs.py and the m2-ws2tcp binaries for six platforms. Built by linux-port/package-web-client.sh, which holds the authoritative list of what belongs in it -- the first archive was packed by hand without index.dev and the client stopped at 'starting'. Unpacks flat. It carries no game data, so it is a release asset of this repository -- which is why engine_url is DERIVED from engine_version and never maintained by hand. Publishing a new engine is: attach the file to the release tagged v<engine_version>, then change engine_version and engine_sha256 here.",
-  "engine_version": "1.11.5",
+  "engine_version": "1.11.6",
   "engine_file": "Reference_WebClientEngine.zip",
   "engine_url": "",
   "engine_url_template": "https://github.com/AzzlackSyndicate/metin2-singleplayer-serverfiles-linux/releases/download/v{version}/Reference_WebClientEngine.zip",
-  "engine_sha256": "3caec054bf60f71b009c2cd78f1e72eb5bc491882e60d0476054087517032337",
+  "engine_sha256": "c83614620cc4cf64432b1f95a8b1fc710d42f5d7a5337836c183aec83ec92289",
   "engine_size_mb": 17,
   "engine_requires_data": "1.0.2",
 

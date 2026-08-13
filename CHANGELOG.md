@@ -17,6 +17,12 @@ every version here.
 
 ---
 
+## 1.13.1 — 2026-08-13
+
+### Fixed
+
+- **Nothing could be picked up.** Neither items nor Yang, by key or by clicking — the character walked to the drop and left it lying there. Removing a diagnostic line before the release took the body of an `if` with it, so the branch adopted the next statement and the pick-up was nested inside a condition that could never be true at the same time. It compiled without a warning. Browser client 1.11.6; the game data is unchanged, so this is a 17 MB update rather than 1.7 GB.
+
 ## 1.13.0 — 2026-08-13
 
 ### Added
