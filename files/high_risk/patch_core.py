@@ -532,6 +532,28 @@ SERVER_EDITS = [
 	std::vector<std::pair<LPITEM, int> > vec_item;
 ''',
     ),
+    # -- killing inside the pool costs no reputation ---------------------------
+    # This already held by accident: the penalty is skipped when the victim wears
+    # the killer flag, and a High Risk victim wears it permanently. Relying on
+    # that is too delicate to leave alone, because the flag BLINKS -- Dead()
+    # clears it a few lines below this test and UpdateKillerMode only puts it
+    # back on the next recovery tick, and there is a window right after a player
+    # opts in where it has not been lit yet. A death inside either window would
+    # quietly cost the killer 20,000 alignment for a kill the mode says is free.
+    # Asking the mode directly has no such window.
+    (
+        "game/src/server/game/src/char_battle.cpp",
+        "IsHighRiskMode(this) &&",
+        "\t\t\t\tif (!isAgreedPVP && !isUnderGuildWar && !IsKillerMode() && GetAlignment() >= 0 && !isDuel && !isForked)\n",
+
+        "\t\t\t\t// !IsHighRiskMode(this) is not redundant beside !IsKillerMode():\n"
+        "\t\t\t\t// the flag it tests is cleared further down this same function\n"
+        "\t\t\t\t// and only re-lit on the next recovery tick, so it is briefly\n"
+        "\t\t\t\t// false for a character that is still very much in the mode.\n"
+        "\t\t\t\t// Killing inside the pool must never cost reputation, so the\n"
+        "\t\t\t\t// mode is asked directly rather than through its symptom.\n"
+        "\t\t\t\tif (!isAgreedPVP && !isUnderGuildWar && !IsKillerMode() && !IsHighRiskMode(this) && GetAlignment() >= 0 && !isDuel && !isForked)\n",
+    ),
     # -- High Risk is a POOL, not a licence ------------------------------------
     # The mode used to make its wearer attackable by everybody, which meant a No
     # Risk player could kill one and take the items, and a High Risk player could
