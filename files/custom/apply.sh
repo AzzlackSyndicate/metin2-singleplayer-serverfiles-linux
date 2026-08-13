@@ -19,9 +19,18 @@
 #      stack_skill_books.py                   books of one skill merge into one
 #                                             stack; books of different skills
 #                                             still never do
+#      free_metin_drop_items.py               the metin bonus drops become
+#                                             droppable and tradable, and the
+#                                             two scrolls stack
+#      split_unique_on_equip.py               Experience Rings and Thief's
+#                                             Gloves stack; wearing one out of
+#                                             the pile takes one out of the pile
+#      set_safebox_pages.py                   the storeroom opens with three
+#                                             pages instead of one
 #      gen_drops.py + targets.txt             a bonus drop group on 283 metins
 #                                             and bosses
 #      shop_musk_oil.sql                      the oil on the shop's counter
+#      safebox_pages.sql                      the same page count in the database
 #
 #  Called by linux-port/docker/prepare-context.sh when M2_CUSTOM_EXPERIENCE=1 --
 #  which is the one moment that works: after the server tree has been staged and
@@ -91,6 +100,32 @@ say "stackable skill books"
 # read. See the head of the script for why that is not a theoretical worry.
 python3 "$HERE/stack_skill_books.py"
 
+say "the bonus drops off metins and bosses"
+# Drop, exchange and private shop opened on all eight items in the bonus drop
+# group, and ANTI_STACK taken off the two scrolls that already claimed the stack
+# bit. Selling to an NPC stays closed. Reads char_item.cpp first and refuses to
+# touch the item table if any branch that spends one of these items has stopped
+# decrementing the count.
+python3 "$HERE/free_metin_drop_items.py"
+
+say "stackable Experience Rings and Thief's Gloves"
+# MUST run after free_metin_drop_items.py -- it anchors on the ANTI_FLAG values
+# that one leaves behind, and stops with a sentence saying so if it has not run.
+# The only patch in this directory besides stack_skill_books.py that touches the
+# core AND the item table, and it refuses to do one without the other: these two
+# rows are worn in a unique slot, and a stackable ring against a core that still
+# moves the whole pile into that slot destroys four rings out of five.
+python3 "$HERE/split_unique_on_equip.py"
+
+say "three-page storeroom"
+# The size of the storeroom window is decided in the game core, not in the
+# database: upstream's line that read safebox.size is commented out one line
+# above the line that does the work (input_db.cpp:1208 / :1209). So this is what
+# gives every account three pages instead of one -- old accounts, new accounts,
+# and the many that have no safebox row at all. safebox_pages.sql further down
+# only keeps the database column agreeing with it.
+python3 "$HERE/set_safebox_pages.py"
+
 # -----------------------------------------------------------------------------
 say "bonus drops on metins and bosses"
 # gen_drops.py GENERATES a table rather than editing one, and it is not
@@ -137,6 +172,26 @@ else
   say "WARNING: no --schema given, so the shop row was not staged. Musk Oil"
   say "         will not be on the General Store Saleswoman's counter, and the"
   say "         quest that now sends players to her cannot be finished."
+fi
+
+# -----------------------------------------------------------------------------
+say "storeroom page count in the database"
+# The companion to set_safebox_pages.py, and NOT what makes the third page
+# appear -- the core decides that on its own. This only stops player.safebox.size
+# contradicting it, which matters to the db process's item_award placement
+# (ClientManager.cpp:620) and to pc.get_safebox_size() in quests. Staged the same
+# way as shop_musk_oil.sql, because the panel's entrypoint applies every .sql in
+# its schema directory on EVERY start. The statement is an UPDATE ... WHERE
+# size < 3, so replaying it matches nothing and it can never shrink an account
+# that some other means has already given more.
+if [ -n "$SCHEMA" ]; then
+  mkdir -p "$SCHEMA"
+  cp -a "$HERE/safebox_pages.sql" "$SCHEMA/safebox_pages.sql"
+  say "safebox_pages.sql -> panel/schema/"
+else
+  say "WARNING: no --schema given, so player.safebox.size was not raised. The"
+  say "         storeroom still opens with three pages -- the core decides that,"
+  say "         not the database -- but the column will disagree with it."
 fi
 
 printf '\n   The Custom Experience is applied.\n'

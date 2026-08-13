@@ -132,6 +132,23 @@ EDITS = [
 ]
 
 
+# A field this script owns can legitimately have been edited AGAIN, further down
+# the chain, by files/custom/free_metin_drop_items.py -- which opens dropping,
+# trading and the private shop on the whole metin bonus drop group, 70038 among
+# them. prepare-context.sh always runs fixes against a pristine tree, so that
+# never happens in a build; it happens when someone re-runs fixes/apply.sh by
+# hand on a tree that has already had custom applied, and without this the run
+# stops with "expected ANTI_DROP | ANTI_SELL | ANTI_GIVE | ANTI_MYSHOP".
+#
+# Listing the later value here rather than widening the anchor keeps the check
+# strict: any OTHER value is still an error, and the ANTI_STACK this script came
+# to remove is absent from both accepted answers, which is the thing that has to
+# be true.
+ALSO_DONE = {
+    ("70038", COL_ANTI_FLAG): ("ANTI_SELL",),
+}
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else SHARE
     path = os.path.join(root, PROTO)
@@ -181,7 +198,8 @@ def main():
                      % (vnum, fields[columns[COL_SIZE]].decode("ascii", "replace")))
 
         current = fields[columns[column]]
-        if current == new.encode("ascii"):
+        done = (new,) + ALSO_DONE.get((vnum, column), ())
+        if current in [value.encode("ascii") for value in done]:
             print("already patched: %s %s" % (vnum, column))
             continue
         if current != old.encode("ascii"):
