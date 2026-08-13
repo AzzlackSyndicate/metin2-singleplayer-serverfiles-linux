@@ -1025,6 +1025,18 @@ choose_custom_experience() {
         case "${M2_HIGH_RISK:-}" in 0|false|no|off|FALSE|NO|OFF) M2_HIGH_RISK=0 ;; *) M2_HIGH_RISK=1 ;; esac
         export M2_HIGH_RISK
 
+        # Read what is already there FIRST, exactly as the High Risk branch
+        # above does. Without this the test below only asks whether the
+        # ENVIRONMENT carries a number -- and it never does at this point,
+        # because the read-back from .env does not happen until
+        # run_fetch_sources(), eighty lines further down. So a server that had
+        # chosen 100 was handed 20 the first time the Custom Experience was
+        # switched on, which is the opposite of what the comment above
+        # promises. Measured on a live server: .env said 100 going in and 20
+        # coming out.
+        if [ -z "${M2_MOVE_SPEED_BONUS:-}" ]; then
+            M2_MOVE_SPEED_BONUS=$(env_get "$INSTALL_DIR/.env" M2_MOVE_SPEED_BONUS 2>/dev/null || true)
+        fi
         if [ -z "${M2_MOVE_SPEED_BONUS:-}" ] && [ "$_prev_custom" != "1" ]; then
             M2_MOVE_SPEED_BONUS=20
         fi

@@ -2543,7 +2543,20 @@ function Select-CustomExperience {
         if (-not $hr) { $hr = Get-EnvValue $envPath 'M2_HIGH_RISK' }
         $script:HighRisk = if ($hr -in @('0', 'false', 'no', 'off')) { '0' } else { '1' }
 
-        if ((-not $env:M2_MOVE_SPEED_BONUS) -and (-not $prev)) {
+        # Ask what is already there FIRST, exactly as the High Risk lines above
+        # do. Testing only $env: asks whether the ENVIRONMENT carries a number,
+        # and on an update it never does -- the value lives in .env and is not
+        # read until Get-Stack, further down. A server that had chosen 100 was
+        # therefore handed 20 the first time the Custom Experience was switched
+        # on, which is the opposite of what the comment above promises. The
+        # Linux installer had the same hole; it was measured on a live server,
+        # .env saying 100 going in and 20 coming out.
+        $speed = $env:M2_MOVE_SPEED_BONUS
+        if (-not $speed) { $speed = $script:MoveSpeedBonus }
+        if (-not $speed) { $speed = Get-EnvValue $envPath 'M2_MOVE_SPEED_BONUS' }
+        if ($speed) {
+            $script:MoveSpeedBonus = $speed
+        } elseif (-not $prev) {
             $script:MoveSpeedBonus = '20'
         }
     } else {
