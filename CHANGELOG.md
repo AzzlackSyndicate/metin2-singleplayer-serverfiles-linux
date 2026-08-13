@@ -17,6 +17,12 @@ every version here.
 
 ---
 
+## 1.15.1 — 2026-08-13
+
+### Fixed
+
+- **Updating with `--domain` forgot the e-mail address your certificate is registered with.** It was only ever read back from your server's settings inside the branch that runs when you *don't* name a domain — and naming it is exactly what the panel's own update command does. Passing `--domain` therefore skipped it and handed the certificate tool an empty address. It is now read back first, whichever way you run it.
+
 ## 1.15.0 — 2026-08-13
 
 ### Fixed

@@ -1510,6 +1510,19 @@ choose_address() {
 
 choose_domain() {
     [ "$LOCAL_ONLY" = "1" ] && return 0
+
+    # The e-mail is recalled BEFORE the early return below, not inside the
+    # remembered-domain block further down, because an operator who passes
+    # --domain explicitly -- which is the command the panel prints, and the
+    # right thing to do on an update -- would otherwise skip that block and
+    # hand acme.sh an empty address. M2_TLS_EMAIL on line 133 only reads the
+    # environment, and an update does not have it there; the answer lives in
+    # the server's own .env. This is the same defect that once reset a chosen
+    # movement-speed bonus to the default on every update.
+    if [ -z "$TLS_EMAIL" ] && [ "$FRESH_INSTALL" = "0" ]; then
+        TLS_EMAIL=$(env_get "$INSTALL_DIR/.env" M2_TLS_EMAIL 2>/dev/null || true)
+    fi
+
     [ -n "$DOMAIN" ] && return 0
 
     # Same reasoning as the address above: on an update we already know. Here it
