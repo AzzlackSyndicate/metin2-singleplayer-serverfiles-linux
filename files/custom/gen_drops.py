@@ -18,6 +18,18 @@ are appended to it with continuing numbering instead of a second group.
 
 Level_limit is the level of the KILLER (item_manager.cpp: iLevel =
 pkKiller->GetLevel()), so 1 means "always".
+
+The two bonus items are 39028 and 39029, NOT the 71051/71052 that used to be
+here. All four re-roll random bonuses, but not the same ones. 71051 and 71052
+are USE_SPECIAL and are dispatched by vnum (char_item.cpp:3829, :3882) into
+CItem::AddRareAttribute / CItem::ChangeRareAttribute (item_attribute.cpp:377,
+:351), which write m_aAttr[5] and m_aAttr[6] -- the two RARE slots, the ones
+past the five normal ones, that almost nothing in this game ever fills. 39028
+and 39029 are USE_CHANGE_ATTRIBUTE and USE_ADD_ATTRIBUTE (char_item.cpp:4553,
+:4658) and go to CItem::ChangeAttribute / CItem::AddAttribute
+(item_attribute.cpp:188, :222), which work on m_aAttr[0..3] -- the four bonuses
+a player actually reads off an item. Dropping the rare pair gave players two
+items that appear to do nothing on everything they own.
 """
 import io
 import re
@@ -27,8 +39,8 @@ SRC, TARGETS, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 
 ITEMS = [                      # (vnum, count)
     (25040, 1),                # Blessing Scroll
-    (71051, 1),                # Bewitch Item      -- change bonus
-    (71052, 1),                # Bless Item        -- add bonus
+    (39028, 1),                # Enchant Item      -- re-rolls bonuses 1-4
+    (39029, 1),                # Reinforce Item    -- adds a bonus, 1-4
     (71094, 1),                # Concentrated Reading
     (71001, 1),                # Exorcism Scroll
     (70005, 1),                # Experience Ring   (equipment, 60 min)
