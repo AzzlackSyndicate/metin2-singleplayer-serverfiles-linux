@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.15.6 — 2026-08-14
+
+### Fixed
+
+- **Fixed Issue with Admin Panel**
+
+---
+
+---
+
 ## 1.15.5 — 2026-08-14
 
 ### Added
