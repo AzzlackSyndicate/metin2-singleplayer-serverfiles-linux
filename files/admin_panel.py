@@ -863,8 +863,6 @@ def bridge_endpoint():
         return host, port, request.is_secure
     return host, BRIDGE_PORT, False
 
-app.jinja_env.globals["DISCORD"] = DISCORD_URL
-
 
 def play_url():
     """The link behind the button: the page, told where the bridge is.
@@ -2040,6 +2038,7 @@ def t(key):
     return T.get(key, {}).get(lang(), T.get(key, {}).get("en", key))
 
 app = Flask(__name__)
+app.jinja_env.globals["DISCORD"] = DISCORD_URL
 app.secret_key = CONF["flask_secret"]
 
 
