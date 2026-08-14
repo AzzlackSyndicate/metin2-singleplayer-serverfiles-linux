@@ -17,6 +17,16 @@ every version here.
 
 ---
 
+## 1.15.5 — 2026-08-14
+
+### Added
+
+- **The panel points at the community's Discord.** A quiet line in the footer of every page, and a proper card for anyone signed in to their game account, saying what is actually there: what changed in the last update, when the server is down for maintenance, and people who answer a question faster than you can search for it — and that a bug reported there is the quickest way to get it fixed. In all three languages the panel speaks.
+
+- The address is **part of the software, not a setting.** It is written into the code rather than read from a config file, deliberately: it is where this project posts its news, so an install cannot quietly drift to a different address and leave its players pointed at nothing. An operator running their own community changes that one line, which is a change to the software and looks like one.
+
+---
+
 ## 1.15.4 — 2026-08-14
 
 ### Fixed

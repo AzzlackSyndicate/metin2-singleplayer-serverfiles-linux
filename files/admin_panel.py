@@ -659,6 +659,14 @@ def _client_download_name(raw):
 # panel needing to be edited.
 BRAND = str(CONF.get("brand", "") or "").strip() or "Singleplayer Official Metin2"
 
+# The community's Discord. DELIBERATELY NOT CONFIGURABLE, and that is the point:
+# it is where this project posts what changed and where a player reports a bug,
+# so it is part of what the panel IS rather than something each install decides.
+# An operator who wants a different address edits this line, which is a change
+# to the software and shows up as one -- not a setting that quietly diverges
+# between installs and leaves players pointed at nothing.
+DISCORD_URL = "https://discord.gg/SSHajSeHm"
+
 CLIENT_NAME  = str(CONF.get("client_name", "Metin2 Client") or "").strip()
 CLIENT_FILE  = _client_download_name(CLIENT_NAME)
 # shown on the download button; empty means "no name configured" -> t('download')
@@ -854,6 +862,9 @@ def bridge_endpoint():
             port = 443 if request.is_secure else 80
         return host, port, request.is_secure
     return host, BRIDGE_PORT, False
+
+app.jinja_env.globals["DISCORD"] = DISCORD_URL
+
 
 def play_url():
     """The link behind the button: the page, told where the bridge is.
@@ -1620,6 +1631,19 @@ T = {
                   "tr":"Beklenmeyen bir sorun oluştu. Tekrar dene; devam ederse sunucuyu kuran kişiye haber ver. 🙏"},
  "not_found":    {"en":"Player not found.","de":"Spieler nicht gefunden.","tr":"Oyuncu bulunamadı."},
  # --- server rates ---
+   # --- discord ---
+   "dc_foot":      {"en":"Discord — news, updates and help",
+                    "de":"Discord — Neuigkeiten, Updates und Hilfe",
+                    "tr":"Discord — haberler, güncellemeler ve yardım"},
+   "dc_title":     {"en":"💬 Come to the Discord",
+                    "de":"💬 Komm auf den Discord",
+                    "tr":"💬 Discord'a gel"},
+   "dc_body":      {"en":"Everything current is there first: what changed in the last update, when the server is down for maintenance, and the people who can answer a question faster than you can search for it. Found a bug? Report it there — it is the quickest way to get it fixed.",
+                    "de":"Alles Aktuelle steht dort zuerst: was sich mit dem letzten Update geändert hat, wann der Server für Wartungen weg ist, und die Leute, die eine Frage schneller beantworten, als du sie suchen kannst. Fehler gefunden? Melde ihn dort — das ist der schnellste Weg, ihn loszuwerden.",
+                    "tr":"Güncel olan her şey önce orada: son güncellemede ne değişti, sunucu bakım için ne zaman kapalı olacak ve bir soruyu aramandan daha hızlı yanıtlayacak insanlar. Hata mı buldun? Oraya bildir — düzeltilmesinin en hızlı yolu."},
+   "dc_btn":       {"en":"💬 Join the Discord",
+                    "de":"💬 Discord beitreten",
+                    "tr":"💬 Discord'a katıl"},
  "rates_nav":    {"en":"⚙️ Server rates","de":"⚙️ Server-Raten","tr":"⚙️ Sunucu oranları"},
  "rates_open":   {"en":"⚙️ Open server rates","de":"⚙️ Server-Raten öffnen","tr":"⚙️ Sunucu oranlarını aç"},
  "rates_dash_hint":{"en":"Make the whole server give more experience, more items and more yang — handy if you would rather do quests than grind.",
@@ -2730,6 +2754,9 @@ __BODY__
 {{t('ver_label')}} {{ panel_version if panel_version else t('ver_unknown') }}
 {% endif %}
 </span></div>
+<p class="muted" style="text-align:center;margin:26px 0 10px;font-size:12.5px">
+<a href="{{ DISCORD }}" target="_blank" rel="noopener noreferrer"
+   style="color:#7a86d6;text-decoration:none">💬 {{ t('dc_foot') }}</a></p>
 </body></html>"""
 
 TPL_LOGIN = BASE.replace("__BODY__", """
@@ -3005,6 +3032,11 @@ TPL_ACCOUNT_LOGIN = BASE.replace("__BODY__", """
 
 TPL_ACCOUNT = BASE.replace("__BODY__", """
 <p><a href="{{url_for('login')}}">← Home</a> &nbsp;|&nbsp; <a href="{{url_for('account_logout')}}">Log out of account</a></p>
+<div class="card" style="border-left:3px solid #5865F2">
+<h3 style="margin-top:0">{{ t('dc_title') }}</h3>
+<p class="muted" style="margin-bottom:14px">{{ t('dc_body') }}</p>
+<a class="btn" href="{{ DISCORD }}" target="_blank" rel="noopener noreferrer">{{ t('dc_btn') }}</a>
+</div>
 <div class="card">
 <h3>👤 {{login}}</h3>
 <p class="muted">Your characters:</p>
