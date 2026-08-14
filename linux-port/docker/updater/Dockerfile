@@ -25,12 +25,12 @@ FROM docker:27-cli AS runtime
 # docker-cli-compose  `docker compose' -- the CLI image does not always carry it
 RUN apk add --no-cache \
         docker-cli-compose \
-        git bash tar patch unzip findutils coreutils \
+        git bash tar patch unzip findutils coreutils python3 \
  && rm -rf /var/cache/apk/*
 
 COPY bin/m2-updater /usr/local/bin/m2-updater
 RUN sed -i 's/\r$//' /usr/local/bin/m2-updater \
- && chmod +x /usr/local/bin/m2-updater
+ && chmod 0755 /usr/local/bin/m2-updater
 
 # The script lives in the IMAGE, not in the checkout it updates. That is not an
 # accident: step 1 of an update rewrites every file in the checkout, and `sh'

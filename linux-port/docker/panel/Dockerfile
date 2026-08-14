@@ -71,7 +71,7 @@ COPY bin/entrypoint.sh /usr/local/bin/entrypoint.sh
 # file placed there by an image would never appear.
 COPY bin/apply_rates.sh /usr/local/bin/apply_rates.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/apply_rates.sh \
- && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/apply_rates.sh
+ && chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/apply_rates.sh
 
 # Two separate volumes, because they have completely different lifecycles:
 #

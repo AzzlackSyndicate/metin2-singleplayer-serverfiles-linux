@@ -54,7 +54,7 @@ COPY pack/ /opt/m2client/pack/
 
 COPY bin/ /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/m2-client-build \
- && chmod +x /usr/local/bin/m2-client-build \
+ && chmod 0755 /usr/local/bin/m2-client-build \
  && if [ -f /opt/m2client/pack/pack.sh ]; then sed -i 's/\r$//' /opt/m2client/pack/pack.sh; fi
 
 # The cache: the downloaded archive and the built client.zip.  Declared as a

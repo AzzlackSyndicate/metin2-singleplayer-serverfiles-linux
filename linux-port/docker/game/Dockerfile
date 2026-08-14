@@ -409,7 +409,7 @@ COPY rates/ /opt/metin2/rates/
 
 COPY bin/ /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/m2-* /usr/local/bin/m2ctl \
- && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/m2-* /usr/local/bin/m2ctl \
+ && chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/m2-* /usr/local/bin/m2ctl \
  && chmod 0755 /opt/metin2/share/bin/game /opt/metin2/share/bin/db \
  && if [ -f /opt/metin2/rates/pack.sh ]; then sed -i 's/\r$//' /opt/metin2/rates/pack.sh; fi
 
