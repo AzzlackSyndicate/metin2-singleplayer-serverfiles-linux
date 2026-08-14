@@ -17,6 +17,30 @@ every version here.
 
 ---
 
+## 1.15.3 — 2026-08-14
+
+### Added
+
+- **The storeroom at the Storekeeper has three pages.** It opened with one page — 45 slots — and the only way the game ever gave you more was a premium account or an item-mall chest expander, neither of which exists on a server that sells nothing, so the second and third pages were unreachable by design. Every account now gets all three, 135 slots, the moment the cores are rebuilt. Nothing is stored per account and nothing has to be bought, claimed or unlocked. Three is also the most this game can hold: the chest is exactly 135 slots wide internally, and the build refuses to go past it rather than quietly corrupting itself. Nothing you have stored moves and nothing is lost — the extra pages are added after the slots you already have, and every client already draws as many page tabs as the server tells it to, so there is no client update to install.
+
+- **The bonus drops off metins and bosses can be dropped, handed to another player and put in a private shop.** Every item in that drop group — Blessing Scroll, Bravery Cape, Exorcism Scroll, Concentrated Reading, the two bonus scrolls, the Experience Ring and the Thief's Gloves — shipped locked to the character who found it: no dropping it, no handing it over, no shop. All three locks are now off. Selling them to an NPC is still refused, deliberately: it is the one mistake you cannot undo.
+
+- **Exorcism Scrolls and Concentrated Reading stack.** Both rows already claimed to be stackable and were vetoed by a second flag on the same row, so a handful of them took a handful of inventory slots. Using one out of a stack spends one — the branch that consumes them already counted down instead of deleting the item.
+
+- **Experience Rings and Thief's Gloves stack, and only while they are unused.** A ring you have worn never merges back into the fresh pile, so you can never lose the time left on one by stacking it: a unique item keeps its remaining time in a socket, the countdown only runs while it is on, and all three places the server merges items already compare every socket before combining anything. Putting one on takes **one** out of the pile — the server moved the whole stacked item into the slot, which was harmless while these could not stack and would have destroyed the entire pile when the hour ran out, so the two changes are made together and neither is applied without the other. If your bags are completely full the ring is not put on at all, rather than the rest of the pile being thrown away to make room. Quivers are untouched.
+
+### Fixed
+
+- **The bonus items dropped by metin stones were the wrong ones.** They were the pair that re-rolls the two *rare* bonus slots — the fifth and sixth, which almost nothing in this game ever fills and no ordinary item shows. Players were being handed items that appeared to do nothing on everything they owned. They are now the pair that works on bonuses one to four, which is what a player actually reads off a weapon or a piece of armour.
+
+- **Ordinary monsters dropped boss loot.** The drop table was attached to 130 monsters it was never meant to include — everything at the rank just below a boss, the stone apes among them. That rank is a common monster in this distribution, not a boss, so the metin and boss reward was falling off things that die by the dozen. The table now covers exactly what it says: 68 metin stones and 108 bosses.
+
+### Note for anyone running a server
+
+Two of these changes are in the game's C++ and not in a data file — the three storeroom pages and the split that takes a single ring out of a stack. **The cores have to be rebuilt** for this release to do anything; re-running the installer is enough. Your database is not touched, and characters, accounts and stored items all survive.
+
+---
+
 ## 1.15.2 — 2026-08-13
 
 ### Fixed
