@@ -2188,12 +2188,55 @@ JOB_NAME  = {0:"Warrior",4:"Warrior",5:"Ninja",1:"Ninja",2:"Sura",6:"Sura",7:"Sh
 
 GOLD_PRESETS = [("💰 1 Million", 1_000_000), ("💰 10 Million", 10_000_000),
                 ("💰 100 Million", 100_000_000), ("👑 1 Billion", 1_000_000_000)]
+# Every pair here MUST land inside a map that exists in the world atlas.
+# pc.warp() takes global world coordinates and resolves them to a map; given a
+# pair that belongs to no map it returns without warping and without an error,
+# so the queue row is stamped 'done' and the panel reports success for a
+# character that never moved. That is not a failure anybody can see.
+#
+# The atlas runs x 0..1638400, y 0..1817600 (atlasinfo.txt: base x, base y,
+# then width and height in blocks of 25600). Desert sat at x=2178000 and
+# Fireland at y=2402700 -- both outside the world, both silent no-ops.
+#
+# A destination also has to be on a map some core actually serves: the server
+# splits the world across the three cores by MAP_ALLOW, and a map no core holds
+# cannot be warped to however right the coordinates are. Every entry below is
+# on a map listed in one of the three MAP_ALLOW lines of a stock install.
+#
+# The pairs are map centres, derived from the server's own share/locale/<lang>/
+# map/<name>/Setting.txt (BasePosition plus MapSize x 25600 / 2), except the
+# three city entries, which are the hand-picked town spots this list started
+# with. Dungeon, guild, duel and test maps are deliberately absent: warping
+# into one drops a character somewhere with no way back out.
+#
+# German and Turkish are missing on the entries added later on purpose rather
+# than guessed -- warp_presets_i18n() falls back to the English name.
 WARP_LOC = [  # (emoji, {lang:name}, coords)
+  # -- Shinsoo (map_a1 / map_a3)
   ("🏯", {"en":"Shinsoo City","de":"Shinsoo-Stadt","tr":"Shinsoo Şehri"}, "474300 954800"),
+  ("🌾", {"en":"Shinsoo Land"}, "358400 870400"),
+  # -- Chunjo (map_b1 / map_b3)
   ("🏮", {"en":"Chunjo City","de":"Chunjo-Stadt","tr":"Chunjo Şehri"}, "65900 155600"),
+  ("🌾", {"en":"Chunjo Land"}, "153600 256000"),
+  # -- Jinno (map_c1 / map_c3)
   ("⛩️", {"en":"Jinno City","de":"Jinno-Stadt","tr":"Jinno Şehri"}, "963500 279700"),
-  ("🏜️", {"en":"Desert","de":"Wüste","tr":"Çöl"}, "2178000 632900"),
-  ("🔥", {"en":"Fireland","de":"Feuerland","tr":"Ateş Ülkesi"}, "1932800 2402700"),
+  ("🌾", {"en":"Jinno Land"}, "870400 256000"),
+  # -- the shared world
+  ("🏜️", {"en":"Desert","de":"Wüste","tr":"Çöl"}, "281600 563200"),
+  ("🔥", {"en":"Fireland","de":"Feuerland","tr":"Ateş Ülkesi"}, "665600 691200"),
+  ("❄️", {"en":"Mount Sohan"}, "435200 230400"),
+  ("🐉", {"en":"Valley of Seungryong"}, "332800 742400"),
+  ("🛕", {"en":"Milgyo"}, "588800 102400"),
+  ("🗼", {"en":"Demon Tower"}, "243200 704000"),
+  ("🌳", {"en":"Trent"}, "307200 25600"),
+  ("🌲", {"en":"Trent 2"}, "1088000 38400"),
+  ("🏞️", {"en":"Wild Land"}, "1100800 768000"),
+  ("⛰️", {"en":"Nusluck"}, "844800 742400"),
+  # -- the later maps
+  ("🐲", {"en":"Cape Dragon Head"}, "1100800 1740800"),
+  ("🌫️", {"en":"Dawnmist Wood"}, "1267200 1715200"),
+  ("🏖️", {"en":"Bay of Black Sand"}, "1088000 1587200"),
+  ("⚡", {"en":"Mount Thunder"}, "1177600 1587200"),
 ]
 SPEED_LOC = [
   ("🚶", {"en":"Normal (reset)","de":"Normal (zurücksetzen)","tr":"Normal (sıfırla)"}, 0),

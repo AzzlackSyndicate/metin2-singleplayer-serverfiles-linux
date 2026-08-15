@@ -17,6 +17,28 @@ every version here.
 
 ---
 
+## 1.16.0 — 2026-08-15
+
+### Fixed
+
+- **Two of the five teleport destinations moved nobody anywhere.** Desert and Fireland were the ones, and they failed in the worst way available: the panel said it had worked. The coordinates behind those two buttons were outside the world. The map the game knows as the desert sits between x 204800 and 358400; the button asked for x 2178000. Fireland asked for y 2402700, where the world stops at 1817600. Handed a pair belonging to no map, the game's `pc.warp` returns without moving the character and without an error, so the queued request was stamped as done and the panel reported success to an admin whose player had not moved. Both now point at their map, and the three city buttons — which were always right — are untouched.
+
+### Added
+
+- **The teleport list covers the world instead of five places in it.** Twenty destinations now, up from five: each kingdom's home map and its second map, the desert, Fireland, Mount Sohan, the Valley of Seungryong, Milgyo, the Demon Tower, both Trents, the Wild Land, Nusluck, and the four later maps — Cape Dragon Head, Dawnmist Wood, the Bay of Black Sand and Mount Thunder.
+
+- Every destination is **taken from the server's own map files** rather than written down by hand, which is what went wrong before. Each pair is the centre of its map, computed from that map's `Setting.txt` — its `BasePosition` plus half its `MapSize` — and then checked twice: that it falls inside the map it names, and that the map is one of those a stock install's three cores actually hold in `MAP_ALLOW`. A destination on a map no core serves cannot be reached however correct its coordinates are, and that check is now part of the reasoning written above the list.
+
+- Dungeon, guild, duel and test maps are **deliberately not offered**, though the cores serve them. Warping into one puts a character somewhere with no entrance behind them and no way out.
+
+### Note for anyone running a server
+
+This is one file — the panel — so rebuilding the panel image is enough; the game cores and your database are untouched.
+
+The destinations added here are the geometric centres of their maps. Being inside the map is proven; being somewhere pleasant to arrive is not, and a centre can fall in water, in scenery or on ground a character cannot stand on. The desert has been walked out of from a real client and is known good. The rest have not all been visited yet, and any that turn out to land badly should be replaced with a spot somebody has actually stood on.
+
+---
+
 ## 1.15.6 — 2026-08-14
 
 ### Fixed
