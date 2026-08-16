@@ -117,6 +117,15 @@ say "stackable Experience Rings and Thief's Gloves"
 # moves the whole pile into that slot destroys four rings out of five.
 python3 "$HERE/split_unique_on_equip.py"
 
+say "Anti-XP Ring in item_proto"
+# A custom worn accessory (vnum 71111) that stops experience while it is on,
+# via APPLY_MALL_EXPBONUS -100 -- no core change. Appends one row to
+# conf/item_proto.txt, idempotent by vnum. Its counter row is shop_anti_xp_ring.sql
+# further down. See the script header for the two things that must be done on a
+# running server before it reaches players (the client name/icon, and verifying
+# the -100 is not clamped).
+python3 "$HERE/anti_xp_ring.py"
+
 say "three-page storeroom"
 # The size of the storeroom window is decided in the game core, not in the
 # database: upstream's line that read safebox.size is commented out one line
@@ -208,6 +217,20 @@ if [ -n "$SCHEMA" ]; then
 else
   say "WARNING: no --schema given, so autoloot_expire was not set. The Third Hand"
   say "         passive (auto-pickup Yang) will not be on players' characters."
+fi
+
+# -----------------------------------------------------------------------------
+say "Anti-XP Ring on the General Store counter"
+# The database half of the ring above: it shelves vnum 71111 in shop 3 at the
+# price its item_proto row carries (100 Yang). Staged like shop_musk_oil.sql; the
+# INSERT IGNORE against the shop's unique key makes replaying it a no-op.
+if [ -n "$SCHEMA" ]; then
+  mkdir -p "$SCHEMA"
+  cp -a "$HERE/shop_anti_xp_ring.sql" "$SCHEMA/shop_anti_xp_ring.sql"
+  say "shop_anti_xp_ring.sql -> panel/schema/"
+else
+  say "WARNING: no --schema given, so the Anti-XP Ring was not shelved. The item"
+  say "         exists in item_proto but is on no counter."
 fi
 
 printf '\n   The Custom Experience is applied.\n'

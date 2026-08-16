@@ -17,6 +17,26 @@ every version here.
 
 ---
 
+## 1.15.10 — 2026-08-16
+
+### New
+
+- **Anti-XP Ring — buy it in the General Store for 100 Yang.** A worn accessory
+  that stops your experience while it is on, for anyone who wants to hold a level
+  or farm a spot without levelling up. Take it off and experience resumes.
+
+### For operators
+
+- The ring is a custom item (vnum 71111). Two things must be done on a running
+  server before players see it properly, both written out at the top of
+  `files/custom/anti_xp_ring.py`: (1) add its name and icon to each client — the
+  browser client rebuild, and a republish of the desktop and original clients —
+  or it shows as "NoName"; (2) verify on the test server that the −100 mall-exp
+  apply is not clamped away (equip it, kill a monster, confirm the XP is 0)
+  before deploying live.
+
+---
+
 ## 1.15.9 — 2026-08-16
 
 ### New

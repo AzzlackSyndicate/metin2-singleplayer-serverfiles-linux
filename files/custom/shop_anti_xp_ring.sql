@@ -1,0 +1,21 @@
+-- The Anti-XP Ring (71111) on the General Store Saleswoman's counter, 100 Yang.
+--
+-- The item itself is defined in conf/item_proto.txt by anti_xp_ring.py, where
+-- its gold is 100; the shop charges gold*count (shop.cpp), so this shelves it at
+-- 100 Yang. Shop 3 is the General Store Saleswoman, the same NPC in every town,
+-- so one row puts it in all of them -- exactly as shop_musk_oil.sql does.
+--
+-- WHY THIS IS SAFE TO RUN AGAIN. Staged into the panel's schema directory, whose
+-- entrypoint applies every .sql there on EVERY start. player.shop_item has
+-- UNIQUE KEY (shop_vnum, item_vnum, count), so INSERT IGNORE adds the row once
+-- and does nothing thereafter, and it never touches another row.
+--
+-- The game cores read the shop tables and rebuild player.item_proto from the txt
+-- once, at boot, so the ring appears on the counter at the next start of the
+-- game container rather than immediately.
+--
+-- TO TAKE IT BACK OUT:
+--     DELETE FROM player.shop_item
+--      WHERE shop_vnum = 3 AND item_vnum = 71111 AND count = 1;
+
+INSERT IGNORE INTO shop_item (shop_vnum, item_vnum, count) VALUES (3, 71111, 1);
