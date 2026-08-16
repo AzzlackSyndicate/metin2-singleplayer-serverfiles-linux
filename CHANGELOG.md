@@ -17,6 +17,28 @@ every version here.
 
 ---
 
+## 1.15.11 — 2026-08-16
+
+### Browser client rebuilt (the fixes are now actually in it)
+
+- **The browser client has been rebuilt and republished** — engine **1.11.7**,
+  data **1.0.3**. The recent browser-client fixes and the 15-language switch were
+  shipped as source in the last releases but were not yet in a published client;
+  they are now. Live in it: typing accented and Turkish letters (ä ı ö ş),
+  reliable item/Yang pick-up, dragging skills onto the quick slots, per-language
+  text so German login works and enemy names (like *Savaş Metini*) show, and the
+  language menu under the Play button. **No touch controls or controller** — this
+  is the plain browser client.
+- Servers update to it the same way as any release: run the update, which
+  re-fetches the browser client and restarts the cores. Players get it on their
+  next load. To type Turkish, pick **Türkçe** from the language menu first.
+
+### Still to come
+
+- The double-click / "character keeps walking" fix is not in this build yet — it
+  is entangled with input machinery that has to be reworked for the public line
+  first.
+
 ## 1.15.10 — 2026-08-16
 
 ### New

@@ -110,12 +110,17 @@ OLD_BLOCK = """	if (!poRet)
 			g_pkExceptionSender->Send();
 """
 
+# PUBLIC LINE: the name for the log comes from PyEval_GetFuncName(poFunc), the
+# callable that is in scope at every one of these sites on the clean public base.
+# (The private/dev tree restructures these functions to carry a c_szFunc name and
+# uses that instead; this line's version is deliberately self-contained so it
+# applies to the public base without that private change.)
 NEW_BLOCK = """	if (!poRet)
 	{
 		// Log it and clear it HERE. Below this point the exception is gone, so
 		// the reporting path cannot fire -- which is the point: one of its
 		// calls traps under wasm and took the client with it.
-		_PyLog_PendingException(c_szFunc);
+		_PyLog_PendingException(PyEval_GetFuncName(poFunc));
 
 		if (g_pkExceptionSender)
 			g_pkExceptionSender->Clear();
