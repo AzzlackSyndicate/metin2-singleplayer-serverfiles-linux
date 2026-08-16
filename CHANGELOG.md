@@ -17,6 +17,28 @@ every version here.
 
 ---
 
+## 1.15.8 — 2026-08-16
+
+### Fixed (browser client)
+
+- **Item and Yang pick-up is reliable now.** On some drops the pick-up key did
+  nothing while you were standing right on them — a distance calculation that
+  the browser build got wrong where the desktop client got it right by accident.
+- **Skills can be dragged onto the quick slots.** Dragging a skill did nothing;
+  now it works the same as dragging an item.
+- **Double-click to equip works on the first try, and the character no longer
+  keeps walking** after a click that used to leave it moving as if the button
+  were stuck.
+- **You can type accented and Turkish letters.** German and Turkish players
+  could not type their own character's name or chat letters like ä, ı, ö, ş —
+  anything above plain ASCII was dropped on the way into the game.
+- **German no longer reports "your files are corrupted", and enemy names show
+  again.** The client now reads each language's text in that language's own
+  character set, so logging in on German works and names like "Savaş Metini"
+  appear in the target bar instead of a blank.
+
+---
+
 ## 1.15.7 — 2026-08-16
 
 ### New
