@@ -864,13 +864,22 @@ def bridge_endpoint():
     return host, BRIDGE_PORT, False
 
 
-def play_url():
+def play_url(lang=None):
     """The link behind the button: the page, told where the bridge is.
 
     ?serverHost / ?serverPort / ?serverTLS are the client's own parameters. With
     them present the page skips its connection dialog entirely and boots
     straight into the game (shell.html), which is what a player arriving from
     this panel should get -- they have already chosen a server by being here.
+
+    ?deflang and ?lang are two parameters on purpose. The browser client ships
+    all fifteen locales and picks one at boot (wasm-port/scripts/
+    speak_all_fifteen_languages.py). `deflang' is what THIS SERVER speaks -- a
+    default, used only for a player who has never chosen, so a Turkish server
+    greets a first-time visitor in Turkish. `lang' is the player's own pick from
+    the menu below the button; it wins and the client remembers it. Collapsing
+    them would let the server's language silently undo the player's choice on the
+    very next render of this link.
     """
     host, port, tls = bridge_endpoint()
     url = "/play/?serverHost=%s&serverPort=%d" % (urllib.parse.quote(host, safe=""), port)
@@ -878,7 +887,63 @@ def play_url():
         url += "&serverTLS=1"
     if BROWSER_CACHE_MB:
         url += "&webfsCache=%d" % BROWSER_CACHE_MB
+    url += "&deflang=%s" % urllib.parse.quote(game_lang(), safe="")
+    if lang and lang in GAME_LANG_NAMES:
+        url += "&lang=%s" % urllib.parse.quote(lang, safe="")
     return url
+
+#  THE FIFTEEN LANGUAGES THE BROWSER CLIENT SPEAKS, OFFERED WHERE THE BUTTON IS.
+#  The client ships every one of them and always did (139 MB of locale packs,
+#  streamed only when read); it now reads /locale.cfg, written at boot from
+#  ?lang / a stored choice / ?deflang / the browser's own answer -- see
+#  wasm-port/scripts/speak_all_fifteen_languages.py. This menu only rewrites
+#  ?lang= on the play links and remembers the pick in localStorage; the device
+#  is what remembers it, so the menu agrees with what the client will do rather
+#  than promising the server's language to somebody who already chose another.
+_PLAY_LANG_JS = """<script>
+(function(){
+ var sels=document.querySelectorAll("select.m2langsel");
+ if(!sels.length) return;
+ var cur=null; try{cur=localStorage.getItem("m2/lang");}catch(e){}
+ function apply(v){
+  var a=document.querySelectorAll("a.play,a.btn.big.play"),i,u;
+  for(i=0;i<a.length;i++){
+   try{u=new URL(a[i].getAttribute("href"),location.href);}catch(e){continue;}
+   u.searchParams.set("lang",v);
+   a[i].setAttribute("href",u.pathname+u.search+u.hash);
+  }
+ }
+ for(var i=0;i<sels.length;i++){
+  if(cur){for(var j=0;j<sels[i].options.length;j++)
+            if(sels[i].options[j].value===cur) sels[i].selectedIndex=j;}
+  sels[i].addEventListener("change",function(){
+   try{localStorage.setItem("m2/lang",this.value);}catch(e){}
+   apply(this.value);
+   for(var k=0;k<sels.length;k++) if(sels[k]!==this) sels[k].value=this.value;
+  });
+ }
+ apply(sels[0].value);
+})();
+</script>"""
+
+
+def play_lang_picker():
+    """The game-language menu that sits under the browser button."""
+    here = game_lang()
+    opts = "".join(
+        '<option value="%s"%s>%s</option>'
+        % (escape(code), " selected" if code == here else "", escape(name))
+        for code, name in GAME_LANGS)
+    return Markup(
+        '<div class="m2langpick" style="margin:10px 0 0">'
+        '<label class="muted" for="m2lang" style="font-size:13px" title="%s">'
+        '🌍 %s '
+        '<select class="m2langsel" id="m2lang" '
+        'style="font:inherit;padding:3px 6px;border-radius:6px;'
+        'border:1px solid #4a3f2c;background:#2a2218;color:#e8d9b8">%s</select>'
+        '</label></div>%s'
+        % (escape(t("tip_play_lang")), escape(t("play_lang")),
+           opts, _PLAY_LANG_JS))
 
 # =============================================================================
 #  Which version this is, and whether a newer one has been published.
@@ -1434,6 +1499,10 @@ T = {
                   "de":"Kein Download, keine Installation — das Spiel öffnet sich als Browser-Tab!",
                   "tr":"İndirme yok, kurulum yok — oyun bir tarayıcı sekmesinde açılır!"},
  "play_btn":     {"en":"🎮 Play in the browser","de":"🎮 Im Browser spielen","tr":"🎮 Tarayıcıda oyna"},
+ "play_lang":    {"en":"Language:","de":"Sprache:","tr":"Dil:"},
+ "tip_play_lang":{"en":"The language the game starts in. The client speaks all fifteen; your choice is remembered on this device.",
+                  "de":"Die Sprache, in der das Spiel startet. Der Client spricht alle fünfzehn; deine Wahl wird auf diesem Gerät gemerkt.",
+                  "tr":"Oyunun başlayacağı dil. İstemci on beş dilin hepsini konuşur; seçimin bu cihazda hatırlanır."},
  "tip_play":     {"en":"Opens the game in a new tab, so this page keeps running. It is the same server as the downloaded game and the same account — a character made in one is there in the other. The downloaded game runs better; this one needs nothing installed.",
                   "de":"Öffnet das Spiel in einem neuen Tab, diese Seite läuft weiter. Es ist derselbe Server wie beim heruntergeladenen Spiel und dasselbe Konto — ein Charakter aus dem einen ist auch im anderen da. Das heruntergeladene Spiel läuft flüssiger; dieses hier braucht keine Installation.",
                   "tr":"Oyunu yeni bir sekmede açar, bu sayfa açık kalır. İndirilen oyunla aynı sunucu ve aynı hesap — birinde yaptığın karakter diğerinde de vardır. İndirilen oyun daha akıcı çalışır; bu ise hiçbir kurulum istemez."},
@@ -2159,6 +2228,8 @@ def inject_i18n():
             "game_langs": GAME_LANGS,
             "game_lang": game_lang(),
             "game_lang_name": game_lang_name(),
+            # The game-language menu shown under the browser Play button.
+            "play_lang_picker": play_lang_picker,
             "lang_state": (lang_status().get("state") or ""),
             # The version, and whether a newer one is known. Both are read out
             # of memory -- update_state() never touches the network, so this
@@ -2830,6 +2901,7 @@ setInterval(function(){
 <p class="muted">{{t('play_hint')}}</p>
 <a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
    title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+{{ play_lang_picker() }}
 </div>
 {% endif %}
 {% if browser_ready and has_desktop %}<div class="orsep">{{t('reg_or')}}</div>{% endif %}
@@ -2969,6 +3041,7 @@ TPL_REG_DONE = BASE.replace("__BODY__", """
 </ol>
 <a class="btn big play" href="{{play_url}}" target="_blank" rel="noopener"
    title="{{t('tip_play')}}">{{t('play_btn')}}</a>
+{{ play_lang_picker() }}
 </div>
 {% endmacro %}
 

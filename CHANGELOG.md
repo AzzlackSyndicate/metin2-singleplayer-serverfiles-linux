@@ -17,6 +17,18 @@ every version here.
 
 ---
 
+## 1.15.9 — 2026-08-16
+
+### New
+
+- **Play the browser client in any of fifteen languages.** A language menu sits
+  under the Play button — Deutsch, Türkçe, English, Русский, and eleven more.
+  Your choice is remembered on your device, and a first-time visitor is greeted
+  in the server's own language. Nothing extra to download: every language was
+  already in the client.
+
+---
+
 ## 1.15.8 — 2026-08-16
 
 ### Fixed (browser client)
