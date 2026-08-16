@@ -45,6 +45,7 @@ ITEMS = [                      # (vnum, count)
     (71001, 1),                # Exorcism Scroll
     (70005, 1),                # Experience Ring   (equipment, 60 min)
     (72005, 1),                # Thief's Gloves     (equipment, 30 min)
+    (39039, 1),                # Sun Elixir (L)    -- large XP boost, a usable
     (70038, 5), (70038, 10), (70038, 25), (70038, 50),   # Bravery Cape, stacked
 ]
 PCT = {"metin": "5", "boss": "5", "sub": "5"}

@@ -17,15 +17,26 @@ every version here.
 
 ---
 
+## 1.15.7 — 2026-08-16
+
+### New
+
+- **Sun Elixir (L) now drops from metin stones and bosses.** Added to the same
+  bonus-drop roll as the Experience Ring and Thief's Gloves, at the same rate, on
+  every metin and boss in the drop list.
+- **Every character now has "Third Hand" — Yang is picked up automatically.** The
+  passive that pulls a monster's dropped Yang straight into your purse, shown on
+  the top left, is granted to every character (old and new) for ten years. It is
+  the account's own auto-loot premium, so nothing has to be equipped and there is
+  nothing to switch on.
+
+---
+
 ## 1.15.6 — 2026-08-14
 
 ### Fixed
 
 - **Fixed Issue with Admin Panel**
-
----
-
----
 
 ## 1.15.5 — 2026-08-14
 

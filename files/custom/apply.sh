@@ -194,4 +194,20 @@ else
   say "         not the database -- but the column will disagree with it."
 fi
 
+# -----------------------------------------------------------------------------
+say "Third Hand (auto-pickup Yang) for every character, ten years"
+# Same staging as the two above: the passive is the account premium
+# PREMIUM_AUTOLOOT, which the core reads from account.account.autoloot_expire at
+# login, so granting it is one dated column. The UPDATE only RAISES a date that
+# is missing or under nine years out, so replaying it is a no-op on an account
+# that already has it and can never shorten a longer grant. See the file header.
+if [ -n "$SCHEMA" ]; then
+  mkdir -p "$SCHEMA"
+  cp -a "$HERE/third_hand_autoloot.sql" "$SCHEMA/third_hand_autoloot.sql"
+  say "third_hand_autoloot.sql -> panel/schema/"
+else
+  say "WARNING: no --schema given, so autoloot_expire was not set. The Third Hand"
+  say "         passive (auto-pickup Yang) will not be on players' characters."
+fi
+
 printf '\n   The Custom Experience is applied.\n'
