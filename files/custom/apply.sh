@@ -84,6 +84,12 @@ export M2SRC="$TREE"
 say "pick-up range"
 python3 "$HERE/set_pickup_range.py"
 
+say "item links in chat"
+# The Glass of Insight is CONSUMED, one per link, and the whole message is
+# refused if the player has none. That is a price on showing someone what you
+# found, which needs a player economy to make sense of; there is none here.
+python3 "$HERE/link_items_without_a_prism.py"
+
 say "horse summoning"
 python3 "$HERE/set_horse_summon_always_succeeds.py"
 

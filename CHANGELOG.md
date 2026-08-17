@@ -17,6 +17,12 @@ every version here.
 
 ---
 
+## 1.15.13 — 2026-08-17
+
+### Fixed
+
+- A round of fixes to the browser client. Linking an item in chat no longer requires a Glass of Insight.
+
 ## 1.15.12 — 2026-08-17
 
 ### Fixed
