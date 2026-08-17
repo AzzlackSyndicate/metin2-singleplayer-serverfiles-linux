@@ -17,6 +17,12 @@ every version here.
 
 ---
 
+## 1.15.12 — 2026-08-17
+
+### Fixed
+
+- A round of fixes to the browser client.
+
 ## 1.15.11 — 2026-08-16
 
 ### Browser client rebuilt (the fixes are now actually in it)
